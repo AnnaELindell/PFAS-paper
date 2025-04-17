@@ -1,0 +1,247 @@
+---
+title: "B. uniformis - PFNA accumulation 12h growth assay"
+author: "Anna Lindell"
+date: "30/03/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+```
+
+
+
+
+
+# Quality control
+
+Read in data:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu4_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+Internal standard:
+```{r eval = FALSE}
+is <- data %>% filter(group != "Blank")
+is <- is[!duplicated(is$file), ]
+
+ggplot(is, aes(x = file, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu4_is.png",
+       width = 10, height = 7, units = "cm")
+
+print.data.frame(is %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+```
+
+Caffeine: Coefficient of variation 6.3 %
+-> raw response used for further calculations
+
+
+Quality control:
+```{r eval = FALSE}
+qc <- data %>% filter(group == "QC")
+
+ggplot(qc, aes(x = file, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  facet_wrap(~compound, scales = "free_x") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu4_qc.png",
+       width = 7, height = 5, units = "cm")
+
+print.data.frame(qc %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+
+rm(list = ls())
+```
+
+QC: Coefficient of variation 6 %
+-> slight signal drift, but not significant
+
+
+
+
+# Median Reduction:
+
+```{r eval = FALSE}
+data <- read.table(file = "data/fu4_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>%
+  filter(group %in% c("Compound control","Supernatant","Pellet","Whole culture"))
+
+cc_median <- data %>%
+  filter(group == "Compound control") %>%
+  group_by(timepoint.h) %>%
+  summarise(median = median(conc))
+
+cc_median <- cc_median$median
+cc_median <- rep(cc_median,  each = 9)
+
+median <- data %>%
+  arrange(timepoint.h, strain, group, replicate) %>%
+  mutate(percent = conc / cc_median * 100)
+
+write.table(median,
+            file = "data/fu4_medianreduction.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+# Plot samples
+
+```{r eval = FALSE}
+data <- read.table(file = "data/fu4_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+median1 <- data %>%
+  group_by(compound, timepoint.h, group) %>%
+  summarise(conc = median(conc),
+            percent = median(percent))
+
+ggplot(median1, aes(x = timepoint.h, y = conc, shape = group)) +
+  geom_line(aes(linetype = group), size = 0.5, color = "#808080") +
+  geom_point(data = data, size = 3) +
+  scale_shape_manual(values=c(3, 1, 0)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(color = "black"),
+        axis.text.y = element_text(color = "black")) +
+  labs(y = "PFNA recovery [uM]", x = "Time [h]") +
+  ylim(0, NA)
+ggsave(file = "results/fu4_pfna-concentration-over-time.png",
+           width = 11, height = 7, units = "cm")
+
+ggplot(median1, aes(x = timepoint.h, y = percent, shape = group)) +
+  geom_line(aes(linetype = group), size = 0.5, color = "#808080") +
+  geom_point(data = data, size = 3) +
+  scale_shape_manual(values=c(3, 1, 0)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(color = "black"),
+        axis.text.y = element_text(color = "black")) +
+  labs(y = "PFNA recovery [%]", x = "Time [h]")
+ggsave(file = "results/fu4_pfna-percentage-over-time.pdf",
+           width = 11, height = 7, units = "cm")
+
+
+# SN with OD600
+od <- read.table(file = "data/fu4_od600.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+sn <- data %>% filter(group == "Supernatant")
+
+odsn <- merge(sn, od, by = c("strain.id", "strain", "timepoint.h", "replicate"))
+
+ylim.percent <- c(40, 110)   # limits for percent
+ylim.od <- c(0, 3.5)    # limits for od
+
+b <- diff(ylim.percent)/diff(ylim.od)
+a <- ylim.percent[1] - b * ylim.od[1]
+
+ggplot(odsn, aes(x = timepoint.h, y = percent)) +
+  geom_smooth(aes(linetype = "Percent [%]"), se = FALSE, color = "black", size = 0.5) +
+  geom_smooth(aes(y = a + OD * b, linetype = "OD600"), se = FALSE, color = "black", size = 0.5) +
+  geom_point(aes(shape = "Percent [%]"), shape = 1, size = 3) +
+  geom_point(aes(y = a + OD * b, shape = "OD600"), shape = 4, size = 3) +
+  scale_y_continuous(sec.axis = sec_axis(~(. - a)/b, name="OD600")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(size=10, color = "black"),
+        axis.text.y = element_text(size=10, color = "black")) +
+  labs(y = "PFNA recovery [%]", x = "Time [h]")
+ggsave(file = "results/fu4_sn_vs_od.pdf",
+           width = 11, height = 7, units = "cm")
+odsn <- odsn %>%
+  select(experiment, strain.id, strain, timepoint.h, replicate, compound, percent, OD)
+write.table(odsn,
+            file = "results/fu4_sn_vs_od.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+# Statistical analyis
+
+T-test to test if supernatant significantly reduced:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu4_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+samples <- data %>% filter(group %in% c("Supernatant"))
+controls <- data %>% filter(group == "Compound control")
+
+time <- unique(data$timepoint.h)
+
+n <- 1
+p_value <- data.frame(time = character(),
+                      p.value = numeric())
+for (t in seq_along(time)) {
+  samples1 <- samples %>% filter(timepoint.h == time[t])
+  controls1 <- controls %>% filter(timepoint.h == time[t])
+  test <- t.test(x = samples1$conc, y = controls1$conc, alternative = "two.sided")
+  p_value[n, 1:2] <- c(time[t], test$p.value)
+  n <- n + 1
+}
+
+write.table(p_value,
+            file = "results/fu4_p_value_sn.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+
+
+Results summary:
+```{r eval = FALSE}
+median <- data %>%
+  group_by(experiment, timepoint.h, strain.id, strain, group, compound, unit) %>%
+  summarise(conc = median(conc),
+            percent = median(percent))
+
+write.table(median,
+            file = "results/fu4_results_summary.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+PFNA is significantly reduced from time point 8 onwards. 
+
+
+

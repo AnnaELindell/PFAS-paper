@@ -1,0 +1,296 @@
+---
+title: "NT5002 & BWdC - PFNA accumulation at different ODs"
+author: "Anna Lindell"
+date: "8/08/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+library(ggpubr)
+library(ggplot2)
+library(ggpp)
+library(ggpmisc)
+```
+
+
+
+# Quality control
+
+Read in data:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu6_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+Internal standard:
+```{r eval = FALSE}
+is <- data %>% filter(group != "Blank")
+
+ggplot(is, aes(x = file, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  facet_wrap(~experiment) +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu6_is.png",
+       width = 12, height = 7, units = "cm")
+
+print.data.frame(is %>% group_by(experiment) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+```
+
+Caffeine: Coefficient of variation 
+BWdC: 10.6 %
+NT5002: 8.5 %
+-> raw response used for further calculations
+
+
+
+Quality control:
+```{r eval = FALSE}
+qc <- data %>% filter(group == "QC")
+
+ggplot(qc, aes(x = file, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Response", x = "Data File") +
+  facet_wrap(~experiment, scales = "free_x") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu6_qc.png",
+       width = 7, height = 5, units = "cm")
+
+print.data.frame(qc %>% group_by(experiment) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+
+rm(list = ls())
+```
+
+QC: Coefficient of variation 
+BWdC: 1.6 %
+NT5002: 14.4
+-> no signal drift
+
+
+
+
+
+# Median Reduction:
+
+```{r eval = FALSE}
+data <- read.table(file = "data/fu6_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>%
+  filter(group %in% c("Compound control","Supernatant","Pellet","Whole culture")) 
+
+
+cc_median <- data %>%
+  filter(group == "Compound control") %>%
+  group_by(experiment) %>%
+  summarise(median = median(conc))
+
+cc_median <- cc_median$median
+cc_median <- rep(cc_median,  c(96, 136))
+
+median <- data %>%
+  arrange(experiment, strain, assay, od, group, replicate) %>%
+  mutate(percent = conc / cc_median * 100)
+
+write.table(median,
+            file = "data/fu6_medianreduction.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+# Plot samples
+
+Plot samples by assay:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu6_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data$od <- as.factor(data$od)
+levels(data$od)
+data$od <- factor(data$od, levels=c("OD8", "OD7", "OD6", "OD5", "OD4", "OD3", "OD2", "OD1", ""))
+
+
+live <- data %>% filter(assay == "live" | group == "Compound control")
+lysed <- data %>% filter(assay == "lysed" | group == "Compound control")
+
+library(ggh4x)
+ggplot(live, aes(x = group, y = percent)) +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  facet_grid2(rows = vars(experiment), cols = vars(od), scales = "free_x", render_empty = FALSE) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust = 0.5, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_rect(colour="white", fill="white")) +
+  labs(y = "PFNA recovery [%]") +
+  ylim(0,NA)
+ggsave(file = "results/fu6_live.png",
+           width = 20, height = 10, units = "cm")
+
+ggplot(lysed, aes(x = group, y = percent)) +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  facet_grid2(rows = vars(experiment), cols = vars(od), scales = "free_x", render_empty = FALSE) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust = 0.5, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_rect(colour="white", fill="white")) +
+  labs(y = "PFNA recovery [%]") +
+  ylim(0,NA)
+ggsave(file = "results/fu6_lysed.png",
+           width = 20, height = 10, units = "cm")
+
+buni <- live %>% filter(strain.id != "BWdC")
+ggplot(buni, aes(x = percent, y = od, shape = group)) +
+  geom_jitter(height = 0.1, size = 3) +
+  scale_shape_manual(values = c(3,1,0)) +
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust = 0.5, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_rect(colour="white", fill="white")) +
+  labs(x = "PFNA recovery [%]") +
+  xlim(0,NA)
+ggsave(file = "results/fu6_nt5002_live.pdf",
+           width = 11, height = 8, units = "cm")
+```
+
+
+Plot sn depletion:
+```{r eval = FALSE}
+sn <- data %>% filter(group == "Supernatant")
+sn$od <- as.factor(sn$od)
+levels(sn$od)
+sn$od <- factor(sn$od, levels=c("OD8", "OD7", "OD6", "OD5", "OD4", "OD3", "OD2", "OD1"))
+
+ggplot(sn, aes(x = percent, y = od, shape = assay)) +
+  geom_jitter(height = 0.1, size = 3) +
+  scale_shape_manual(values=c(1, 4)) +
+  theme_bw() +
+  xlim(0,100) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(strain)) +
+  labs(x = "Supernatant Recovery [%]")
+ggsave(file = "results/fu6_percent_sn_livelysed.png",
+           width = 12, height = 7, units = "cm")
+
+
+snlive <- sn %>% filter(assay == "live")
+
+ggplot(snlive, aes(x = percent, y = od)) +
+  geom_point(size = 3, shape = 1) +
+  theme_bw() +
+  xlim(0,100) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(strain)) +
+  labs(x = "Supernatant Recovery [%]")
+ggsave(file = "results/fu6_percent_sn_live.pdf",
+           width = 12, height = 7, units = "cm")
+
+rm(list = ls())
+```
+
+
+
+# Statistical analyis
+
+T-test to test if supernatant significantly reduced:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu6_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+samples <- data %>% filter(group == c("Supernatant"))
+controls <- data %>% filter(group == "Compound control")
+
+exp <- unique(samples$experiment)
+as <- unique(samples$assay)
+ods <- unique(samples$od)
+
+n <- 1
+p_value <- data.frame(experiment = character(),
+                      assay = character(),
+                      od = character(),
+                      p.value = numeric())
+for (e in seq_along(exp)) {
+  samples1 <- samples %>% filter(experiment == exp[e])
+  controls1 <- controls %>% filter(experiment == exp[e])
+  for (a in seq_along(as)) {
+    samples2 <- samples1 %>% filter(assay == as[a])
+    for (o in seq_along(ods)) {
+      samples3 <- samples2 %>% filter(od == ods[o])
+      if(nrow(samples3) == 0) next
+      test <- t.test(x = samples3$conc, y = controls1$conc, alternative = "two.sided")
+      p_value[n, 1:4] <- c(exp[e], as[a], ods[o], test$p.value)
+      n <- n + 1
+    }
+  }
+}
+
+write.table(p_value,
+            file = "results/fu6_p_value_sn.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+
+
+Results summary:
+```{r eval = FALSE}
+median <- data %>%
+  group_by(experiment, assay, od, strain.id, strain, group, compound, unit) %>%
+  summarise(conc = median(conc),
+            percent = median(percent))
+
+write.table(median,
+            file = "results/fu6_results_summary.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+PFNA is significantly reduced for all ODs and all cultures.
+
+

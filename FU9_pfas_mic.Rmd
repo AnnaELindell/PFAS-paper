@@ -1,0 +1,475 @@
+---
+title: "pfa_dose-response-growth_different-strains"
+author: "Anna Lindell"
+date: "27/09/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+
+
+
+# Normalising data by minimum value
+
+Read in data:
+```{r  eval = FALSE}
+data <- read.table(file = "data/fu9_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+Define function:
+```{r  eval = FALSE}
+SubtractMin <- function(y) {
+  new_data <- y %>%
+    group_by(strain, compound, concentration, replicate) %>%
+    summarize(min = min(OD))
+  new_data <- merge(y, new_data, by = c("strain", "compound", "concentration", "replicate"))
+  new_data$OD <- new_data$OD - new_data$min
+  df<-data.frame(new_data)
+  return(df)
+}
+```
+
+
+Normalise data:
+```{r  eval = FALSE}
+norm <- data %>%
+  SubtractMin %>%
+  arrange(strain, compound, concentration, replicate, time) %>%
+  select(id, strain, compound, concentration, replicate, plate, well, time, OD)
+```
+
+
+Save data:
+```{r  eval = FALSE}
+write.table(norm, file = "data/fu9_normalised-data.txt", 
+            sep = "\t", dec = ".",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+
+
+Plot normalised data:
+```{r  eval = FALSE}
+norm$replicate <- as.factor(norm$replicate)
+norm$concentration <- as.factor(norm$concentration)
+levels(norm$concentration)
+norm$concentration <- factor(norm$concentration, levels = c("Control", "500", "250", "125", "62", "31", "15.6", "7.8", "3.9", "2", "1"))
+norm$strain<- as.factor(norm$strain)
+levels(norm$strain)
+norm$strain <- factor(norm$strain, levels = c("B. dorei", "B. thetaiotaomicron", "B. uniformis", "C. aerofaciens", "C. comes", "O. splanchnicus", "P. merdae", "E. coli ED1a", "E. coli IAI1", "E. coli BW25113", "E. coli BW25113 delta-tolC",  "E. coli BW25113 imp4213::FRT", "E. coli C43 (DE3) WT", "E. coli C43 (DE3) delta-ArcA-ArcB-TolC", "E. coli C43 (DE3) delta-ArcA-ArcB"))
+
+comp <- c("PFHpA", "PFOA", "PFNA", "PFDA")
+
+for (i in seq_along(comp)) {
+  subset <- norm %>% filter(compound == "DMSO" | compound == comp[i])
+  plot <- ggplot(subset, aes(x = time, y = OD, color = replicate)) +
+    ggtitle(paste(comp[i], "MIC", sep = " ")) +
+    geom_point(size = 0.5, alpha = 0.5) +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.y = element_text(color = "black"),
+        axis.text.x = element_text(color = "black"),
+        strip.background = element_blank()) +
+    labs(x = "Time [h]", color = "Replicate") +
+    scale_color_manual(values=c("#ff1493","#00ff7f","#3399ff","orange")) +
+    facet_grid(rows = vars(strain), cols = vars(concentration), scales = "free")
+  ggsave(plot, 
+         file = paste("results/growth-curve-by-compound/", comp[i], ".pdf", sep = ""),
+         width = 25, height = 35, unit = "cm")
+}
+
+strains <- unique(norm$strain)
+
+norm$compound <- as.factor(norm$compound)
+levels(norm$compound)
+norm$compound <- factor(norm$compound, levels = c("DMSO", "PFHpA", "PFOA", "PFNA", "PFDeA"))
+
+for (i in seq_along(strains)) {
+  subset <- norm %>% filter(strain == strains[i])
+  plot <- ggplot(subset, aes(x = time, y = OD, color = replicate)) +
+    ggtitle(paste(strains[i], "MIC", sep = " ")) +
+    geom_point(size = 1) +
+    theme_bw() +
+    labs(x = "Time [h]", color = "Replicate") +
+    scale_color_manual(values=c("#ff1493","#00ff7f","#3399ff","orange")) +
+    facet_grid(rows = vars(compound), cols = vars(concentration))
+  ggsave(plot, 
+         file = paste("results/growth-curve-by-strain/", strains[i], ".png", sep = ""),
+         width = 25, height = 15, unit = "cm")
+}
+
+rm(list = ls())
+```
+
+
+
+# Calculating AUC and normalising by control values:
+
+Read in data:
+```{r  eval = FALSE}
+data <- read.table(file = "data/fu9_normalised-data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+Calculate AUC:
+```{r  eval = FALSE}
+library(bayestestR)
+
+auc_data <- data %>%
+  group_by(id, strain, compound, concentration, replicate, plate, well) %>%
+  summarize(auc = area_under_curve(time, OD, method = "trapezoid"))
+```
+
+
+
+Define functions for normalsising data:
+```{r eval = FALSE}
+Normalisation <- function(y) {
+  control <- y %>%
+    filter(compound == "DMSO") %>%
+    group_by(strain, plate) %>%
+    summarize(ControlMedian = median(auc))
+  new_data <- merge(y, control, by = c("strain", "plate"))
+  new_data$norm_auc <- new_data$auc / new_data$ControlMedian
+  df<-data.frame(new_data)
+  return(df)
+}
+```
+
+
+Normalise data by control median:
+```{r eval = FALSE}
+auc_data1 <- auc_data %>%
+  Normalisation %>%
+  dplyr::select(id, strain, compound, concentration, replicate, auc, norm_auc) %>%
+  arrange(strain, compound, concentration, replicate)
+
+write.table(auc_data1, file = "data/fu9_auc_data.txt", 
+            sep = "\t", dec = ".",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+# Quality control:
+
+Read in data:
+```{r  eval = FALSE}
+data <- read.table(file = "data/fu9_auc_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+Normalised data distribution:
+```{r eval = FALSE}
+# look at normalised data distribution:
+ggplot(data, aes(x = norm_auc)) +
+  geom_density() +
+  geom_vline(xintercept = 1) +
+  ggtitle("Distribution of AUC")
+ggsave(file = "qualitycontrol/distribution-auc.png",
+       width = 20, height = 15, unit = "cm")
+
+
+# look at normalised data distribution for controls:
+controls <- data %>%
+  filter(compound == "DMSO")
+ggplot(controls, aes(x = norm_auc)) +
+    geom_density() +
+    ggtitle("Distribution of AUC for Controls")
+ggsave(file = "qualitycontrol/distribution-auc-controls.png",
+       width = 20, height = 15, unit = "cm")
+
+
+# look at normalised data distribution for controls grouped by strain:
+ggplot(controls, aes(x = norm_auc)) +
+    geom_density() +
+  facet_wrap(~strain) +
+    ggtitle("Distribution of AUC for Controls")
+ggsave(file = "qualitycontrol/distribution-auc-controls-strains.png",
+       width = 20, height = 15, unit = "cm")
+
+rm(list = ls())
+```
+
+
+
+
+# Statistical analysis:
+
+Read in data:
+```{r  eval = FALSE}
+data <- read.table(file = "data/fu9_auc_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+Z-score normalisation:
+```{r eval = FALSE}
+control <- data %>%
+  filter(compound == "DMSO")
+samples <- data %>%
+  filter(compound != "DMSO")
+
+strains <- unique(samples$strain)
+comp <- unique(samples$compound)
+conc <- unique(samples$concentration)
+rep <- unique(samples$replicate)
+
+
+new_data <- data.frame(strain = character(),
+                       compound = character(),
+                       concentration = character(),
+                       replicate = character(),
+                       auc = numeric(),
+                       norm_auc = numeric(),
+                       zscore = numeric())
+n <- 1
+for (s in seq_along(strains)) {
+  subset1 <- samples %>% filter(strain == strains[s])
+  control1 <- control %>% filter(strain == strains[s])
+  for (c in seq_along(comp)) {
+    subset2 <- subset1 %>% filter(compound == comp[c])
+    for (i in seq_along(conc)) {
+      subset3 <- subset2 %>% filter(concentration == conc[i])
+      for (r in seq_along(rep)) {
+        subset4 <- subset3 %>% filter(replicate == rep[r])
+        zscore <- (subset4$norm_auc - mean(control1$norm_auc)) / sd(control1$norm_auc)
+        new_data[n, 1:7] <- c(strains[s],
+                              comp[c],
+                              conc[i],
+                              rep[r],
+                              subset4$auc,
+                              subset4$norm_auc,
+                              zscore)
+        n <- n + 1
+      }
+    }
+  }
+}
+
+```
+
+
+Convert z-score to p-value:
+```{r eval = FALSE}
+new_data <- new_data %>%
+  mutate_at(c("replicate", "auc", "norm_auc", "zscore"), as.numeric) %>%
+  mutate(p_value = 2 * pnorm(abs(zscore), lower.tail=FALSE))
+```
+
+
+Adjust p-value by number of concentrations:
+```{r eval = FALSE}
+adj_data <- new_data %>%
+  group_by(strain, compound, replicate) %>%
+  mutate(p_adj = p.adjust(p_value, method = "fdr")) %>%
+  arrange(strain, compound, concentration, replicate)
+
+write.table(adj_data, file = "results/fu9_results.txt",
+            sep = "\t", dec = ".",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+# Plot samples
+
+Create a heatmap by compound:
+```{r eval = FALSE}
+heatmap <- read.table(file = "results/fu9_results.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+heatmap <- heatmap %>%
+  group_by(strain, compound, concentration) %>%
+  summarize(norm_auc = mean(norm_auc)) %>%
+  mutate(inhibition = 100 - (norm_auc * 100))
+
+heatmap$inhibition <- pmax(heatmap$inhibition,0)
+
+heatmap$concentration <- as.factor(heatmap$concentration)
+levels(heatmap$concentration)
+heatmap$compound <- as.factor(heatmap$compound)
+levels(heatmap$compound)
+heatmap$compound <- factor(heatmap$compound, levels = c("PFHpA", "PFOA", "PFNA", "PFDA"))
+heatmap$strain<- as.factor(heatmap$strain)
+levels(heatmap$strain)
+heatmap$strain <- factor(heatmap$strain, levels = c("B. dorei", "B. thetaiotaomicron", "B. uniformis", "C. aerofaciens", "C. comes", "O. splanchnicus", "P. merdae", "E. coli ED1a", "E. coli IAI1", "E. coli BW25113", "E. coli BW25113 delta-tolC",  "E. coli BW25113 imp4213::FRT", "E. coli C43 (DE3) WT", "E. coli C43 (DE3) delta-ArcA-ArcB-TolC", "E. coli C43 (DE3) delta-ArcA-ArcB"))
+
+ggplot(heatmap, aes(x = concentration, y = compound)) +
+  geom_tile(aes(fill = inhibition), color = "black") +
+  geom_text(aes(label = round(inhibition, 0)), size = 2) +
+  theme_bw() +
+  labs(x = "Concentration [uM]") +
+  facet_wrap(~ strain, ncol = 3) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, color = "black"),
+        axis.text.y = element_text(color = "black"),
+        text = element_text(size = 10),
+        strip.background = element_blank()) +
+  scale_fill_gradient2(name = "Growth\nInhibition [%]", low = "white",  high = "#36454F", limits=c(0,100))
+ggsave(file = "results/fu9_heatmap.png",
+       width = 20, height = 15, unit = "cm")
+
+ggplot(heatmap, aes(x = concentration, y = compound)) +
+  geom_tile(aes(fill = inhibition), color = "black") +
+  theme_bw() +
+  labs(x = "Concentration [uM]") +
+  facet_wrap(~ strain, ncol = 3) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, color = "black"),
+        axis.text.y = element_text(color = "black"),
+        text = element_text(size = 10),
+        strip.background = element_blank()) +
+  scale_fill_gradient2(name = "Growth\nInhibition [%]", low = "white",  high = "#36454F", limits=c(0,100))
+ggsave(file = "results/fu9_heatmap_restricted.png",
+       width = 20, height = 15, unit = "cm")
+
+write.table(heatmap,
+            file = "results/fu9_heatmap.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+
+
+
+
+Plot data without mutant strains and mutant strains separate:
+```{r eval = FALSE}
+heatmap1 <- heatmap %>%
+  filter(strain %in% c("B. dorei", "B. thetaiotaomicron", "B. uniformis", "C. aerofaciens", "C. comes", "E. coli ED1a", "E. coli IAI1", "O. splanchnicus", "P. merdae"))
+heatmap1$strain<- as.factor(heatmap1$strain)
+levels(heatmap1$strain)
+heatmap1$strain <- factor(heatmap1$strain, levels = c("B. dorei", "B. thetaiotaomicron", "B. uniformis", "C. aerofaciens", "C. comes", "E. coli ED1a", "E. coli IAI1", "O. splanchnicus", "P. merdae"))
+heatmap2 <- heatmap %>%
+  filter(strain %in% c("E. coli BW25113", "E. coli BW25113 imp4213::FRT", "E. coli BW25113 delta-tolC",  "E. coli C43 (DE3) WT", "E. coli C43 (DE3) delta-ArcA-ArcB", "E. coli C43 (DE3) delta-ArcA-ArcB-TolC"))
+heatmap2$strain<- as.factor(heatmap2$strain)
+levels(heatmap2$strain)
+heatmap2$strain <- factor(heatmap2$strain, levels = c("E. coli BW25113", "E. coli BW25113 imp4213::FRT", "E. coli BW25113 delta-tolC",  "E. coli C43 (DE3) WT", "E. coli C43 (DE3) delta-ArcA-ArcB", "E. coli C43 (DE3) delta-ArcA-ArcB-TolC"))
+
+ggplot(heatmap1, aes(x = concentration, y = compound)) +
+  geom_tile(aes(fill = inhibition), color = "black") +
+  theme_bw() +
+  labs(x = "Concentration [uM]") +
+  facet_wrap(~ strain, ncol = 3) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, color = "black"),
+        axis.text.y = element_text(color = "black"),
+        text = element_text(size = 10),
+        strip.background = element_blank()) +
+  scale_fill_gradient2(name = "Growth\nInhibition [%]", low = "white",  high = "#6f89a2", limits=c(0,100))
+ggsave(file = "results/fu9_heatmap_group1.png",
+       width = 20, height = 10, unit = "cm")
+
+ggplot(heatmap2, aes(x = concentration, y = compound)) +
+  geom_tile(aes(fill = inhibition), color = "black") +
+  theme_bw() +
+  labs(x = "Concentration [uM]") +
+  facet_wrap(~ strain, ncol = 3) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, color = "black"),
+        axis.text.y = element_text(color = "black"),
+        text = element_text(size = 10),
+        strip.background = element_blank()) +
+  scale_fill_gradient2(name = "Growth\nInhibition [%]", low = "white",  high = "#6f89a2", limits=c(0,100))
+ggsave(file = "results/fu9_heatmap_group2.png",
+       width = 20, height = 7, unit = "cm")
+
+rm(list = ls())
+```
+
+
+Hit calling depending on the number of significant replicates:
+```{r eval = FALSE}
+# Read in data:
+data <- read.table(file = "results/fu9_results.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+# filter out hits:
+inhibition <- data %>%
+  group_by(strain, compound, concentration) %>%
+  arrange(strain, compound, concentration) %>%
+  filter(p_adj < 0.05 & norm_auc < 0.8)
+
+promotion <- data %>%
+  group_by(strain, compound, concentration) %>%
+  arrange(strain, compound, concentration) %>%
+  filter(p_adj < 0.05 & norm_auc > 1.2)
+
+
+# Define function for hit calling:
+HitCalling <- function(y) {
+  Mean_of_hits <- y %>%
+    group_by(strain, compound, concentration) %>%
+    summarize(auc = mean(auc),
+              norm_auc = mean(norm_auc),
+              p.value = mean(p_value),
+              p.adj = mean(p_adj))
+  hit_calling <- y %>%
+    dplyr::select(strain, compound, concentration, replicate) %>%
+    pivot_wider(id_cols = c(strain, compound, concentration), names_from = replicate, names_prefix = "rep", values_from = replicate) %>%
+    relocate(rep1, .after = concentration) %>%
+    mutate(rep1 = recode(rep1, "1" = "1", "2" = "1", "3" = "1")) %>%
+    mutate(rep2 = recode(rep2, "1" = "1", "2" = "1", "3" = "1")) %>%
+    mutate(rep3 = recode(rep3, "1" = "1", "2" = "1", "3" = "1")) %>%
+    mutate(rep1 = as.numeric(rep1), rep2 = as.numeric(rep2), rep3 = as.numeric(rep3)) %>%
+    mutate(hits = sum(rep1, rep2, rep3, na.rm = TRUE))
+  hit_calling <- merge(Mean_of_hits, hit_calling, by = c("strain", "compound", "concentration"))
+  hit_calling <- hit_calling %>% arrange(strain, compound, concentration)
+  df<-data.frame(hit_calling)
+  return(df)
+}
+
+hits_inhibition <- HitCalling(inhibition)
+hits_inhibition <- hits_inhibition %>% filter(hits >= 2)
+
+write.table(hits_inhibition, file = "results/fu9_hits.txt",
+            sep = "\t", dec = ".",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+Determine MIC
+```{r eval = FALSE}
+# Read in data:
+data <- read.table(file = "results/fu9_hits.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+mic <- data %>%
+  group_by(strain, compound, concentration) %>%
+  arrange(strain, compound, concentration) %>%
+  filter(norm_auc < 0.1)
+
+write.table(hits_inhibition, file = "results/fu9_hits.txt",
+            sep = "\t", dec = ".",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+

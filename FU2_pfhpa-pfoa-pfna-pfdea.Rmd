@@ -1,0 +1,235 @@
+---
+title: "PFHpA - PFOA - PFNA - PFDeA"
+author: "Anna Lindell"
+date: "12/09/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+```
+
+
+
+
+
+# Quality control
+
+Read in data:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu2_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+Internal standard:
+```{r eval = FALSE}
+is <- data %>% filter(group != "Blank")
+is <- is[!duplicated(is$file), ]
+
+ggplot(is, aes(x = file, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu2_is.png",
+       width = 10, height = 7, units = "cm")
+
+print.data.frame(is %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+```
+
+Ibuprofen: Coefficient of variation 10 %
+-> raw response used for further calculations
+
+
+Quality control:
+```{r eval = FALSE}
+qc <- data %>% filter(group == "QC")
+
+ggplot(qc, aes(x = file, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  facet_wrap(~compound, scales = "free_x") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu2_qc.png",
+       width = 10, height = 10, units = "cm")
+
+print.data.frame(qc %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+
+rm(list = ls())
+```
+
+QC: Coefficient of variation 2.3 - 5 %
+-> no significant signal drift
+
+
+
+# Median Reduction:
+
+```{r eval = FALSE}
+data <- read.table(file = "data/fu2_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>%
+  filter(group %in% c("Compound control","Supernatant","Whole culture"))
+
+cc_median <- data %>%
+  filter(group == "Compound control") %>%
+  group_by(compound) %>%
+  summarise(median = median(conc))
+
+cc_median <- cc_median$median
+cc_median <- rep(cc_median,  each = 9)
+
+median <- data %>%
+  arrange(compound, strain, group, replicate) %>%
+  mutate(percent = conc / cc_median * 100)
+
+write.table(median,
+            file = "data/fu2_medianreduction.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+# Plot samples
+
+```{r eval = FALSE}
+data <- read.table(file = "data/fu2_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data$compound <- as.factor(data$compound)
+levels(data$compound)
+data$compound <- factor(data$compound, levels = c("PFHpA", "PFOA", "PFNA", "PFDA"))
+data$group <- as.factor(data$group)
+levels(data$group)
+data$group <- factor(data$group, levels = c("Compound control", "Supernatant", "Whole culture"))
+
+ggplot(data, aes(x = group, y = conc)) +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  facet_grid(~compound, scales = "free_x") +
+  theme_bw() +
+  ylim(0, 25) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_text(face = "italic"),
+        axis.text.x = element_text(color = "black", angle = 90, , vjust = 0.5, hjust = 1),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(colour="white", fill="white")) +
+  labs(y = "PFAS recovery [uM]", x = "B. unifomris")
+ggsave(file = "results/fu2_concentration.png",
+           width = 12, height = 7, units = "cm")
+
+ggplot(data, aes(x = group, y = percent)) +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  facet_grid(~compound, scales = "free_x") +
+  theme_bw() +
+  ylim(0, 135) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_text(face = "italic"),
+        axis.text.x = element_text(color = "black", angle = 90, , vjust = 0.5, hjust = 1),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(colour="white", fill="white")) +
+  labs(y = "PFAS recovery [%]", x = "B. unifomris")
+ggsave(file = "results/fu2_percent.pdf",
+           width = 10, height = 7, units = "cm")
+
+sn <- data %>% filter(group == "Supernatant")
+levels(sn$compound)
+sn$compound <- factor(sn$compound, levels=c("PFDA", "PFNA", "PFOA", "PFHpA"))
+
+ggplot(sn, aes(x = percent, y = compound)) +
+  geom_point(size = 3, shape = 1) +
+  theme_bw() +
+  xlim(0,105) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  labs(x = "Supernatant Recovery [%]")
+ggsave(file = "results/fu2_percent_sn.pdf",
+           width = 7, height = 7, units = "cm")
+
+rm(list = ls())
+```
+
+
+
+
+# Statistical analyis
+
+T-test
+```{r eval = FALSE}
+data <- read.table(file = "data/fu2_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+samples <- data %>% filter(group != "Compound control")
+controls <- data %>% filter(group == "Compound control")
+
+comp <- unique(data$compound)
+lev <- c("Supernatant", "Whole culture")
+
+n <- 1
+p_value <- data.frame(compound = character(),
+                      group = character(),
+                      p.value = numeric())
+for (c in seq_along(comp)) {
+  samples1 <- subset(samples, samples$compound == comp[c])
+  controls1 <- subset(controls, controls$compound == comp[c])
+  for (i in seq_along(lev)) {
+    samples2 <- subset(samples1, samples1$group == lev[i])
+    test <- t.test(x = samples2$conc, y = controls1$conc, alternative = "two.sided")
+    p_value[n, 1:3] <- c(comp[c], lev[i], test$p.value)
+    n <- n + 1
+  }
+}
+```
+
+
+Combine p-value data with median reduction data
+```{r eval = FALSE}
+summary <- data %>%
+  group_by(experiment, compound, strain.id, strain, group, unit) %>%
+  summarise(conc = median(conc),
+            percent = median(percent))
+
+new_data <- merge(summary, p_value, by = c("compound", "group"), all = TRUE)
+new_data <- new_data %>%
+  relocate(experiment)
+
+write.table(new_data,
+            file = "results/fu2_results.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+

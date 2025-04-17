@@ -1,0 +1,316 @@
+---
+title: "PFNA-dose-different-media"
+author: "Anna Lindell"
+date: "20/09/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+library(ggplot2)
+```
+
+
+
+
+
+
+# Quality control
+
+Read in data:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu8_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+
+Internal standard:
+```{r eval = FALSE}
+is <- data %>% filter(group != "Blank", group != "QC")
+
+ggplot(is, aes(x = file, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  facet_grid(cols = vars(media), rows = vars(injection.vol), scales = "free") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu8_is.png",
+       width = 15, height = 10, units = "cm")
+
+print.data.frame(is %>% group_by(injection.vol, media) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+```
+
+Weirdly the supernatant samples have higher IS levels compared to whole culture and compound control  samples.
+Coefficient of variation for caffeine 50 - 60 %
+
+
+
+
+Quality control for response:
+```{r eval = FALSE}
+qc <- data %>% filter(group == "QC")
+
+ggplot(qc, aes(x = file, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu8_qc_resp.png",
+       width = 7, height = 5, units = "cm")
+
+print.data.frame(qc %>% 
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+```
+
+QC: Coefficient of variation 
+7 %
+-> At the beginning of the run up and down of signal, then constant.
+
+
+
+Quality control for ratio:
+```{r eval = FALSE}
+ggplot(qc, aes(x = file, y = ratio)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "Ratio", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu8_qc_ratio.png",
+       width = 7, height = 5, units = "cm")
+
+print.data.frame(qc %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), ratio))
+
+rm(list = ls())
+```
+
+QC: Coefficient of variation slightly worse: 10 %
+---> raw response used for concentration calculations
+
+
+
+
+# Median Reduction:
+
+```{r eval = FALSE}
+data <- read.table(file = "data/fu8_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>%
+  filter(group %in% c("Compound control","Supernatant","Whole culture")) %>%
+  na.omit()
+
+
+cc_median <- data %>%
+  filter(group == "Compound control") %>%
+  group_by(media, set_conc) %>%
+  summarise(median = median(conc)) 
+
+cc_median <- cc_median$median
+cc_median <- rep(cc_median,  each = 12)
+
+median <- data %>%
+  arrange(experiment, media, set_conc, group, replicate) %>%
+  mutate(percent = conc / cc_median * 100)
+
+write.table(median,
+            file = "data/fu8_medianreduction.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+# Plot samples
+
+cc, sn, wc:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu8_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+ggplot(data, aes(x = group, y = percent)) +
+  geom_jitter(width = 0.1, size = 2, shape = 1) +
+  facet_grid2(rows = vars(media), cols = vars(set_conc), scales = "free_x", render_empty = FALSE) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust = 0.5, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "PFAS recovery [%]") +
+  ylim(0,NA)
+ggsave(file = "results/fu8_percent.pdf",
+           width = 10, height = 11, units = "cm")
+```
+
+
+Plot sn depletion:
+```{r eval = FALSE}
+sn <- data %>% filter(group == "Supernatant")
+sn$set_conc <- as.factor(sn$set_conc)
+levels(sn$set_conc)
+sn$set_conc <- factor(sn$set_conc, levels=c("0.001", "0.01", "0.1", "1", "10", "100"))
+
+ggplot(sn, aes(x = percent, y = set_conc)) +
+  geom_point(size = 3, shape = 1) +
+  theme_bw() +
+  xlim(0,NA) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(media)) +
+  labs(x = "Supernatant Recovery [%]", y = "PFAS concentration [uM]")
+ggsave(file = "results/fu8_percent_sn.png",
+           width = 15, height = 7, units = "cm")
+```
+
+
+Plot sn depletion for mGAM only:
+```{r eval = FALSE}
+mgam <- sn %>% filter(media == "mGAM")
+
+ggplot(mgam, aes(x = percent, y = set_conc)) +
+  geom_point(size = 3, shape = 1) +
+  theme_bw() +
+  xlim(0,100) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  labs(x = "Supernatant Recovery [%]", y = "PFAS concentration [uM]")
+ggsave(file = "results/fu8_percent_sn_mgam.pdf",
+           width = 7, height = 7, units = "cm")
+
+rm(list = ls())
+```
+
+
+
+# Plot samples after OD correction
+
+Plot sn depletion:
+```{r eval = FALSE}
+sn <- read.table(file = "data/fu8_od_correction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+sn$set_conc <- as.factor(sn$set_conc)
+levels(sn$set_conc)
+sn$set_conc <- factor(sn$set_conc, levels=c("0.01", "0.1", "1", "10", "100"))
+
+ggplot(sn, aes(x = accumulation.per.od, y = set_conc)) +
+  geom_point(size = 3, shape = 1) +
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(media), scales = "free_x") +
+  labs(x = "Accumulation per OD unit", y = "PFAS concentration [uM]")
+ggsave(file = "results/fu8_percent_sn_od_corrected.png",
+           width = 15, height = 7, units = "cm")
+
+rm(list = ls())
+```
+
+Average OD:
+BHI: 0.1
+GAM: 0.5
+mGAM: 0.95
+
+CAVEAT: bacteria barely grew in BHI, making the results for the OD corrected accumulation questionable.
+
+
+
+
+# Statistical analyis
+
+T-test to test if supernatant significantly reduced:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu8_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+samples <- data %>% filter(group == c("Supernatant"))
+controls <- data %>% filter(group == "Compound control")
+
+med <- unique(samples$media)
+sconc <- unique(samples$set_conc)
+
+n <- 1
+p_value <- data.frame(media = character(),
+                      set_conc = character(),
+                      p.value = numeric())
+for (c in seq_along(med)) {
+  samples1 <- samples %>% filter(media == med[c])
+  controls1 <- controls %>% filter(media == med[c])
+  for (s in seq_along(sconc)) {
+    samples2 <- samples1 %>% filter(set_conc == sconc[s])
+    controls2 <- controls1 %>% filter(set_conc == sconc[s])
+    test <- t.test(x = samples2$conc, y = controls2$conc, alternative = "two.sided")
+    p_value[n, 1:3] <- c(med[c], sconc[s], test$p.value)
+    n <- n + 1
+  }
+}
+
+adj_data <- p_value %>%
+  group_by(media) %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr")) %>%
+  arrange(media, set_conc)
+
+write.table(adj_data,
+            file = "results/fu8_p_value_sn.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+
+
+
+Results summary:
+```{r eval = FALSE}
+median <- data %>%
+  group_by(experiment, compound, media, set_conc, strain.id, strain, group, unit) %>%
+  summarise(conc = median(conc),
+            percent = median(percent))
+
+write.table(median,
+            file = "results/fu8_results_summary.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+

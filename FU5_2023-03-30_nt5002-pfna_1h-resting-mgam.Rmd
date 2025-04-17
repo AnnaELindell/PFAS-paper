@@ -1,0 +1,218 @@
+---
+title: "B. uniformis - PFNA accumulation (1h resting mGAM)"
+author: "Anna Lindell"
+date: "30/03/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+```
+
+
+
+
+
+# Quality control
+
+Read in data:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu5_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+Internal standard:
+```{r eval = FALSE}
+is <- data %>% filter(group != "Blank")
+is <- is[!duplicated(is$file), ]
+
+ggplot(is, aes(x = file, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu5_is.png",
+       width = 10, height = 7, units = "cm")
+
+print.data.frame(is %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+```
+
+Caffeine: Coefficient of variation 13.3 %
+-> raw response used for further calculations
+
+
+Quality control:
+```{r eval = FALSE}
+qc <- data %>% filter(group == "QC")
+
+ggplot(qc, aes(x = file, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  facet_wrap(~compound, scales = "free_x") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu5_qc.png",
+       width = 7, height = 5, units = "cm")
+
+print.data.frame(qc %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+
+rm(list = ls())
+```
+
+QC: Coefficient of variation 6.4 %
+-> slight signal drift, but not significant
+
+
+
+
+# Median Reduction:
+
+```{r eval = FALSE}
+data <- read.table(file = "data/fu5_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>%
+  filter(group %in% c("Compound control","Supernatant","Pellet","Whole culture")) %>%
+  filter(replicate != "lost")
+# Remove replicate3 -> as part of sample was spilled
+
+
+cc_median <- data %>%
+  filter(group == "Compound control") %>%
+  group_by(timepoint.min) %>%
+  summarise(median = median(conc))
+
+cc_median <- cc_median$median
+cc_median <- rep(cc_median,  each = 7)
+
+median <- data %>%
+  arrange(timepoint.min, strain, group, replicate) %>%
+  mutate(percent = conc / cc_median * 100)
+
+write.table(median,
+            file = "data/fu5_medianreduction.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+# Plot samples
+
+```{r eval = FALSE}
+data <- read.table(file = "data/fu5_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+median1 <- data %>%
+  group_by(compound, timepoint.min, group) %>%
+  summarise(conc = median(conc),
+            percent = median(percent))
+
+ggplot(median1, aes(x = timepoint.min, y = conc, shape = group)) +
+  geom_line(aes(linetype = group), size = 0.5, color = "#808080") +
+  geom_point(data = data, size = 3) +
+  scale_shape_manual(values=c(3, 1, 0)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(color = "black"),
+        axis.text.y = element_text(color = "black")) +
+  labs(y = "PFNA recovery [uM]", x = "Time [min]") +
+  ylim(0, NA)
+ggsave(file = "results/fu5_pfna-concentration-over-time.png",
+           width = 11, height = 7, units = "cm")
+
+ggplot(median1, aes(x = timepoint.min, y = percent, shape = group)) +
+  geom_line(aes(linetype = group), size = 0.5, color = "#808080") +
+  geom_point(data = data, size = 3) +
+  scale_shape_manual(values=c(3, 1, 0)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(color = "black"),
+        axis.text.y = element_text(color = "black")) +
+  labs(y = "PFNA recovery [%]", x = "Time [min]") +
+  ylim(0, NA)
+ggsave(file = "results/fu5_pfna-percentage-over-time.pdf",
+           width = 11, height = 7, units = "cm")
+
+rm(list = ls())
+```
+
+
+
+
+# Statistical analyis
+
+T-test to test if supernatant significantly reduced:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu5_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+samples <- data %>% filter(group %in% c("Supernatant"))
+controls <- data %>% filter(group == "Compound control")
+
+time <- unique(data$timepoint.min)
+
+n <- 1
+p_value <- data.frame(time = character(),
+                      p.value = numeric())
+for (t in seq_along(time)) {
+  samples1 <- samples %>% filter(timepoint.min == time[t])
+  controls1 <- controls %>% filter(timepoint.min == time[t])
+  test <- t.test(x = samples1$conc, y = controls1$conc, alternative = "two.sided")
+  p_value[n, 1:2] <- c(time[t], test$p.value)
+  n <- n + 1
+}
+
+write.table(p_value,
+            file = "results/fu5_p_value_sn.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+
+
+Results summary:
+```{r eval = FALSE}
+median <- data %>%
+  group_by(experiment, timepoint.min, strain.id, strain, group, compound, unit) %>%
+  summarise(conc = median(conc),
+            percent = median(percent))
+
+write.table(median,
+            file = "results/fu5_results_summary.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+PFNA is significantly reduced at all time points.
+
+
+
+
+
