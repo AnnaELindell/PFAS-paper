@@ -1,0 +1,472 @@
+---
+title: "Xenobiotics Single Strain Screen"
+author: "Anna Lindell"
+date: "19/10/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+library(purrr)
+library(ggpubr)
+library(knitr)
+library(plotrix)
+library(latexpdf)
+library(data.table)
+library(broom)
+```
+
+# Combining data
+
+
+Read in and combine files:
+```{r eval = FALSE}
+data <- dir(path = "data/subsets/", pattern = "*.txt") %>%
+  map(~ read_delim(file.path("data/subsets/", .), 
+                   delim = "\t", col_types = cols(),
+                   na = c("", "NA"))) %>%
+  reduce(rbind)
+```
+
+
+
+Rename columns:
+```{r eval = FALSE}
+data <- data %>% 
+  rename(
+    file = `Data File`,
+    strain.id = Name,
+    replicate = `Sample Group`,
+    compound = Comment,
+    group = Level,
+    compound.resp = Resp....6,
+    is.resp = Resp....7
+  ) %>%
+  add_column(experiment = rep("Assay2", 3534)) %>%
+  mutate(ratio = compound.resp / is.resp)     # add ratio column
+```
+
+
+
+Save data files:
+```{r eval = FALSE}
+write.table(data, file = "data/assay2_rawdata.txt", 
+            sep = "\t", dec = ".",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+
+
+# Quality control
+
+Internal standard:
+```{r eval = FALSE}
+data <- read.table(file = "data/assay2_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+is <- data %>% filter(group != "Blank")
+
+ggplot(is, aes(x = file, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free") +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/assay2_is.png",
+       width = 25, height = 20, units = "cm")
+
+cv.is.data <- print.data.frame(is %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+
+summary(cv.is.data$cv)
+```
+
+Signal drift for some runs.
+
+|          | Min   | Median | Mean  | Max    |
+|----------|-------|--------|-------|--------|
+| IS       | 13 %  | 29 %   | 35 %  | 91 %   |
+
+
+
+
+
+
+Quality control:
+```{r eval = FALSE}
+qc <- data %>% filter(group == "QC")
+
+ggplot(qc, aes(x = file, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free") +
+  labs(y = "Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/assay2_qc_resp.png",
+       width = 25, height = 20, units = "cm")
+
+ggplot(qc, aes(x = file, y = ratio)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free") +
+  labs(y = "Ratio", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/assay2_qc_ratio.png",
+       width = 25, height = 20, units = "cm")
+
+cv.qc.resp <- print.data.frame(qc %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+cv.qc.ratio <- print.data.frame(qc %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), ratio))
+
+summary(cv.qc.resp$cv)
+summary(cv.qc.ratio$cv)
+
+rm(list = ls())
+```
+
+|          | Min   | Median | Mean  | Max    |
+|----------|-------|--------|-------|--------|
+| Response | 0.4 % | 0.7 %  | 0.8 % | 16 %   |
+| Ratio    | 0.5 % | 0.9 %  | 0.9 % | 14 %   |
+
+
+QC's quite stabel over time. Slight signal drift for some compounds.
+
+Using the Response or ratio does not make a big change for the QC.
+
+
+
+
+
+
+
+
+
+
+
+# Concentration curves
+
+Pyraclostrobin and Heroin removed because the compound control was degraded over the course of the 4h incubation period.
+
+Concentration curved for the remaining 11 compounds were prepared in excel based on the compound response.
+
+NT5001, NT5024, NT5029, NT5045, NT5075, NT5083 removed as contaminated.
+
+
+
+
+
+# Median Reduction:
+
+```{r eval = FALSE}
+data <- read.table(file = "data/assay2_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>% 
+  filter(group %in% c("Compound control", "Supernatant", "Whole culture")) %>%
+  filter(strain.id %in% c("Compound control", "NT5052", "NT5074", "NT5071", "NT5021", "NT5049", "NT5073", "NT5048", "NT5004", "NT5050", "NT5055", "NT5011", "NT5081", "NT5002", "NT5009"))
+
+cc_median <- data %>%
+  filter(group == "Compound control") %>%
+  group_by(compound) %>%
+  summarise(median = median(conc)) 
+
+n <- data %>%
+  group_by(compound) %>%
+  count()
+n <- n$n
+
+cc_median <- cc_median$median
+cc_median <- rep(cc_median,  n)
+
+median <- data %>%
+  arrange(experiment, compound, strain, group, replicate) %>%
+  mutate(percent = conc / cc_median * 100)
+
+write.table(median,
+            file = "data/assay2_medianreduction.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+Summarize data by taking the mean of the biological replicates data:
+```{r eval = FALSE}
+data <- read.table(file = "data/assay2_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+sum <- data %>%
+  group_by(compound, experiment, strain.id, strain, group, is, unit, replicate) %>%
+  summarize(compound.resp = mean(compound.resp),
+            is.resp = mean(is.resp),
+            ratio = mean(ratio),
+            conc = mean(conc),
+            percent = mean (percent)) %>%
+  select(experiment, strain.id, strain, group, replicate, compound, is, compound.resp, is.resp, ratio, unit, conc, percent)
+
+write.table(sum,
+            file = "data/assay2_medianreduction_mean.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+### Plot Samples
+
+
+Plot data
+```{r eval = FALSE}
+data <- read.table(file = "data/assay2_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data$strain <- as.factor(data$strain)
+levels(data$strain)
+data$strain <- factor(data$strain, levels=c("Compound control", "A. muciniphila", "B. caccae", "B. clarus", "B. dorei", "B. stercoris", "B. thetaiotaomicron", "B. uniformis", "C. aerofaciens", "C. comes", "E. rectale", "O. splanchnicus", "P. distasonis", "P. merdae", "R. intestinalis"))
+
+comp <- unique(data$compound)
+
+for (c in seq_along(comp)) {
+  subset <- data %>% filter(compound == comp[c])
+  control <- subset %>% filter(group == "Compound control")
+  median <- median(control$percent)
+  plot <- ggplot(subset, aes(x = group, y = percent)) +
+    geom_hline(yintercept = median, color = "grey") +
+    geom_jitter(width = 0.1, size = 3, shape = 1) +
+    facet_grid(~strain, scales = "free_x") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+          text = element_text(size=10),
+          axis.text.x = element_text(size=10, angle = 90, , vjust = 0.5, hjust = 0.5, color = "black"),
+          axis.text.y = element_text(size=10, color = "black"),
+          axis.title.x = element_blank(),
+          strip.background = element_blank()) +
+    labs(y = "Recovery [%]") +
+    ylim(0,NA)
+  ggsave(plot,
+           file = paste("figures/", comp[c], "_percent.pdf", sep = ""),
+           width = 40, height = 7, units = "cm")
+}
+
+for (c in seq_along(comp)) {
+  subset <- data %>% filter(compound == comp[c])
+  control <- subset %>% filter(group == "Compound control")
+  median <- median(control$conc)
+  plot <- ggplot(subset, aes(x = group, y = conc)) +
+    geom_hline(yintercept = median, color = "grey") +
+    geom_jitter(width = 0.1, size = 3, shape = 1) +
+    facet_grid(~strain, scales = "free_x") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+          text = element_text(size=10),
+          axis.text.x = element_text(size=10, angle = 90, , vjust = 0.5, hjust = 0.5, color = "black"),
+          axis.text.y = element_text(size=10, color = "black"),
+          axis.title.x = element_blank(),
+          strip.background = element_blank()) +
+    labs(y = "Recovery [uM]") +
+    ylim(0,NA)
+  ggsave(plot,
+           file = paste("figures/", comp[c], "_conc.png", sep = ""),
+           width = 40, height = 7, units = "cm")
+}
+
+rm(list = ls())
+```
+
+
+
+
+
+
+
+
+# Statistical analysis
+
+
+
+Read in data:
+```{r eval=FALSE}
+data <- read.table(file = "data/assay2_medianreduction_mean.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+T-test:
+```{r eval = FALSE}
+bugs <- subset(data, data$strain != "Compound control")
+control <- subset(data, data$strain == "Compound control")
+
+comp <- unique(bugs$compound)
+strains <- unique(bugs$strain)
+lev <- unique(bugs$group)
+
+n <- 1
+p_value <- data.frame(compound = character(),
+                      strain = character(),
+                      group = character(),
+                      p.value = numeric())
+for (c in seq_along(comp)) {
+  bugs1 <- bugs %>% filter(compound == comp[c])
+  control1 <- control %>% filter(compound == comp[c])
+  for (i in seq_along(strains)) {
+    bugs2 <- bugs1 %>% filter(strain == strains[i])
+    for (l in seq_along(lev)) {
+      bugs3 <- bugs2 %>% filter(group == lev[l])
+      test <- t.test(x = bugs3$conc, y = control1$conc, alternative = "two.sided")
+      p_value[n, 1:4] <- c(comp[c], strains[i], lev[l], test$p.value)
+      n <- n + 1
+    }
+  }
+}
+
+adj_data <- p_value %>%
+  group_by(strain) %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr")) %>%
+  arrange(compound, strain, group)
+
+new.data <- data %>%
+  group_by(experiment, compound, strain.id, strain, group) %>%
+  summarise(conc = median(conc),
+            percent = median(percent)) %>%
+  full_join(adj_data, by = c("compound", "strain", "group"))
+
+new.data$significant <- ifelse(new.data$percent <= 80 & new.data$p_adj < 0.05, "yes", "no")
+
+
+write.table(new.data,
+            file = "results/assay2_results.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+Create interaction dataset:
+```{r eval = FALSE}
+data <- read.table(file = "results/assay2_results_hits.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>%
+  filter(group != "Compound control") %>%
+  pivot_wider(id_cols = c(experiment, compound, strain.id, strain), names_from = group, values_from = hit) %>%
+  mutate(interaction = case_when(Supernatant == "hit" & `Whole culture` == "hit" ~ "Biotransformation", 
+                              Supernatant == "hit" & `Whole culture` == "no hit" ~ "Bioaccumulation", 
+                              .default = "No interaction"))
+
+write.table(data,
+            file = "results/assay2_interactions.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+Create Interaction heatmap:
+```{r eval = FALSE}
+data <- read.table(file = "results/assay2_interactions.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data$compound <- as.factor(data$compound)
+levels(data$compound)
+data$compound <- factor(data$compound, levels = c("BPAF", "BPS", "Boscalid", "Fludioxonil", "Imazalil", "Propiconazole", "Pyrimethanil", "PFNA", "PFOA", "Tributyl-PO4",  "Triphenyl-PO4"))
+data$strain <- as.factor(data$strain)
+levels(data$strain)
+data$strain <- factor(data$strain, levels = c("A. muciniphila", "R. intestinalis", "P. merdae", "P. distasonis", "O. splanchnicus", "E. rectale", "C. comes", "C. aerofaciens", "B. uniformis", "B. thetaiotaomicron", "B. stercoris", "B. dorei", "B. clarus", "B. caccae"))
+
+ggplot(data, aes(x = compound, y = strain)) +
+  geom_tile(aes(fill = interaction), color = "black") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(), axis.title.y = element_blank(),
+        axis.text.x = element_text(size = 10, angle = 90, vjust = 0.5, hjust=1, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black", face = "italic"),
+        text = element_text(size = 10)) +
+  scale_y_discrete(position = "left") +
+  scale_fill_manual(values = c("#546bab", "#bea9de", "white"))
+ggsave("results/assay2_interaction_heatmap.pdf",
+       width = 13, height = 10, units = "cm")
+
+rm(list = ls())
+```
+
+
+
+Interaction Sankey:
+```{r eval = FALSE}
+data <- read.table(file = "results/assay2_results_hits.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+interactions <- read.table(file = "results/assay2_interactions.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>%
+  filter(group == "Supernatant") %>%
+  full_join(interactions, by = c("experiment", "compound", "strain.id", "strain")) %>%
+  mutate(percent_reduction = 100 - percent) %>%
+  mutate(percent_reduction = if_else(percent_reduction < 0, 0, percent_reduction)) %>%
+  select(experiment, compound, strain.id, strain, percent, percent_reduction, interaction)
+
+write.table(data,
+            file = "results/assay2_interactions_sankey.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+data <- data %>%
+  filter(interaction != "No interaction")
+
+nodes <- data %>% dplyr::select(strain) %>% arrange(strain)
+nodes <- data.frame(node = 0:19,
+                    name = unique(c(nodes$strain, data$compound)))
+links <- merge(data, nodes, by.x = "compound", by.y = "name")
+links <- merge(links, nodes, by.x = "strain", by.y = "name") %>%
+  arrange(strain, compound) %>%
+  dplyr::select(node.x, node.y, percent_reduction, interaction) %>%
+  rename(source = node.y, target = node.x, value = percent_reduction)
+
+library(networkD3)
+network <- sankeyNetwork(Links = links, Nodes = nodes, Source = "source", Target = "target", Value = "value", NodeID = "name", fontFamily = "arial", iterations = 0, LinkGroup = "interaction")
+network
+saveNetwork(network, "results/assay2_sankey.html", selfcontained = TRUE)
+
+```
+
+
+
+

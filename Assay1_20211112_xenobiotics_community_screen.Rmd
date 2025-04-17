@@ -1,0 +1,450 @@
+---
+title: "Xenobiotics Community Screen"
+author: "Anna Lindell"
+date: "12/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r include=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(readr)
+library(purrr)
+library(ggpubr)
+library(knitr)
+library(data.table)
+library(broom)
+```
+
+
+# Combining data
+
+
+Read in and combine files:
+```{r eval = FALSE}
+data <- dir(path = "data/subsets/", pattern = "*.txt") %>%
+  map(~ read_delim(file.path("data/subsets/", .), 
+                   delim = "\t", col_types = cols(),
+                   na = c("", "NA"))) %>%
+  reduce(rbind)
+```
+
+
+
+Rename columns:
+```{r eval = FALSE}
+data <- data %>% 
+  rename(
+    name = Name,
+    community.id = `Sample Group`,
+    compound = Level,
+    replicate = Comment,
+    compound.resp = Resp....5,
+    is.resp = Resp....6
+  ) 
+```
+
+
+Add biological replicate column:
+```{r eval = FALSE}
+data <- data %>%
+  mutate(biologicalreplicate = case_when(
+    endsWith(replicate, "b1") ~ "b1",
+    endsWith(replicate, "b2") ~ "b2",
+    endsWith(replicate, "b3") ~ "b3"
+  ))
+```
+
+
+Save data files:
+```{r eval = FALSE}
+write.table(data, file = "data/assay1_cleaned.txt", 
+            sep = "\t", dec = ".",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+
+
+
+
+
+
+# Quality control
+
+Internal standard:
+```{r eval = FALSE}
+data <- read.table(file = "data/assay1_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+is <- data %>% filter(group != "Blank")
+
+ggplot(is, aes(x = file, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free") +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/assay1_is.png",
+       width = 30, height = 30, units = "cm")
+
+cv.is.data <- print.data.frame(is %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+
+summary(cv.is.data$cv)
+```
+
+Internal standard Caffeine/Ibuprofen quite stable over time for most componunds
+
+Coefficient of variation: 
+- Min: 1.8 %; Max: 41 %
+- Median: 4.3 %; Mean: 7.8 %
+
+
+
+
+Quality control for response:
+```{r eval = FALSE}
+qc <- data %>% filter(group == "QC")
+
+ggplot(qc, aes(x = file, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free") +
+  labs(y = "Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/assay1_qc_resp.png",
+       width = 25, height = 25, units = "cm")
+
+ggplot(qc, aes(x = file, y = ratio)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free") +
+  labs(y = "Ratio", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/assay1_qc_ratio.png",
+       width = 25, height = 25, units = "cm")
+
+cv.qc.resp <- print.data.frame(qc %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+cv.qc.ratio <- print.data.frame(qc %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), ratio))
+
+summary(cv.qc.resp$cv)
+summary(cv.qc.ratio$cv)
+
+rm(list = ls())
+```
+
+|----------| Min   | Median | Mean  | Max    |
+|----------|-------|--------|-------|--------|
+| Response | 0.3 % | 1.5 %  | 3.5 % | 24.5 % |
+| Ratio    | 0.7 % | 1.7 %  | 3.9 % | 22.8 % |
+
+
+QC's quite stabel over time. Positive signal drift for BPA, MDMA, Sudan I. Negative signal drift for 1-Nitropyrene and BPAF.
+
+Using the Response or ratio does not make a big change for the QC.
+
+
+
+
+
+
+
+
+
+
+### Concentration curves
+
+L-cyhalothrin, 1-Nitropyrene and Sudan I removed because the compound control was degraded over the course of the 4h incubation period.
+
+Concentration curved for the remaining 42 compounds were prepared in excel based on ratio of compound response and internal standard response.
+
+
+
+
+
+
+# Median Reduction:
+
+```{r eval = FALSE}
+data <- read.table(file = "data/assay1_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>% 
+  filter(group %in% c("Compound control", "Supernatant"))
+
+cc_median <- data %>%
+  filter(group == "Compound control") %>%
+  group_by(compound) %>%
+  summarise(median = median(conc)) 
+
+n <- data %>%
+  group_by(compound) %>%
+  count()
+n <- n$n
+
+cc_median <- cc_median$median
+cc_median <- rep(cc_median,  n)
+
+median <- data %>%
+  arrange(experiment, compound, community, group, biologicalreplicate, technicalreplicate) %>%
+  mutate(percent = conc / cc_median * 100)
+
+write.table(median,
+            file = "data/assay1_medianreduction.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+Summarize data by taking the mean of the biological replicates data:
+```{r eval = FALSE}
+data <- read.table(file = "data/assay1_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+sum <- data %>%
+  group_by(compound, experiment, community, id, group, is, unit, biologicalreplicate) %>%
+  summarize(compound.resp = mean(compound.resp),
+            is.resp = mean(is.resp),
+            ratio = mean(ratio),
+            conc = mean(conc),
+            percent = mean (percent)) %>%
+  select(experiment, community, id, group, biologicalreplicate, compound, is, compound.resp, is.resp, ratio, unit, conc, percent)
+
+write.table(sum,
+            file = "data/assay1_medianreduction_mean.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+### Plot Samples
+
+Plot data:
+```{r eval = FALSE}
+data <- read.table(file = "data/assay1_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data$id <- as.factor(data$id)
+levels(data$id)
+data$id <- factor(data$id, levels=c("cc", "c1", "c2"))
+
+ggplot(data, aes(x = id, y = percent)) +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  facet_wrap(~compound, scales = "free") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust = 0.5, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "PFAS recovery [%]") +
+  ylim(0,NA)
+ggsave(file = "results/assay1_percent.png",
+           width = 25, height = 25, units = "cm")
+
+ggplot(data, aes(x = id, y = conc)) +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  facet_wrap(~compound, scales = "free") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust = 0.5, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "PFAS recovery [uM]") +
+  ylim(0,30)
+ggsave(file = "results/assay1_conc.png",
+           width = 25, height = 25, units = "cm")
+
+rm(list = ls())
+```
+
+
+
+
+### Statistical analysis
+
+
+Plot density plot of controls:
+```{r}
+data <- read.table(file = "results/assay1_results.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+data <- data %>%
+  filter(id == "cc") %>%
+  arrange(compound)
+
+plot(density(data$percent),
+     main = "Density plot of compound controls")
+
+rm(list = ls())
+```
+
+A cut off value of > 20 % reduction was chosen for further analysis.
+
+
+
+T-test to test if supernatant significantly reduced:
+```{r}
+data <- read.table(file = "data/assay1_medianreduction_mean.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+comp <- unique(data$compound)
+ids <- c("c1", "c2")
+
+n <- 1
+p_value <- data.frame(compound = character(),
+                      id = character(),
+                      p.value = numeric())
+for (c in seq_along(comp)) {
+  samples1 <- data %>% filter(compound == comp[c] & id != "cc")
+  controls1 <- data %>% filter(compound == comp[c] & id == "cc")
+  for (i in seq_along(ids)) {
+    samples2 <- samples1 %>% filter(id == ids[i])
+    test <- t.test(x = samples2$conc, y = controls1$conc, alternative = "two.sided")
+    p_value[n, 1:3] <- c(comp[c], ids[i], test$p.value)
+    n <- n + 1
+  }
+}
+
+adj_data <- p_value %>%
+  group_by(id) %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr")) %>%
+  arrange(compound)
+
+new.data <- data %>%
+  group_by(experiment, compound, community, id, group) %>%
+  summarise(conc = median(conc),
+            percent = median(percent)) %>%
+  full_join(adj_data, by = c("compound", "id"))
+
+new.data$hit <- ifelse(new.data$percent <= 80, "hit", "no hit")
+
+write.table(new.data,
+            file = "results/assay1_results.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+Results Heat map:
+```{r}
+data <- read.table(file = "results/assay1_results.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>%
+  filter(id != "cc")
+
+compound.group <- data.frame(compound.group = c("Bisphenol", "Bisphenol", "Bisphenol", "Bisphenol", "Bisphenol", "Mycotoxins", "Mycotoxins", "Mycotoxins", "Mycotoxins", "Mycotoxins", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "Pesticides", "PFAS", "PFAS", "Substances of abuse", "Substances of abuse", "Substances of abuse", "Substances of abuse", "Substances of abuse", "Other", "Other", "Other", "Other", "Other", "Other", "Other", "Other"),
+                             compound = c("BPA", "BPAF", "BPB", "BPF", "BPS", "Deoxynivalenol", "Ochratoxin A", "Patulin", "T2-Toxin", "Zearalenone", "Acetamiprid", "Azoxystrobin", "Boscalid", "Carbendazim", "Chlorantraniliprole", "Clothianidin", "Fludioxonil", "Fluopyram", "Imazalil", "Imidacloprid", "Malation", "Propiconazole", "Pyraclostrobin", "Pyrimethanil", "Tebuconazole", "Thiabendazole", "Thiamethoxam", "PFOA", "PFNA", "Cocaine", "Heroin", "MDMA", "Methamphetamine", "Nicotine", "o-Anisidin", "Caffeine", "Catechol", "Melamine", "NMOR", "Serotonin", "Tributyl-PO4", "Triphenyl-PO4"))
+
+data <- data %>% 
+  full_join(compound.group, by = c("compound"))
+
+data$compound <- as.factor(data$compound)
+levels(data$compound)
+data$compound <- factor(data$compound, 
+                           levels=c("BPA", "BPAF", "BPB", "BPF", "BPS", 
+                                    "Deoxynivalenol", "Ochratoxin A", "Patulin", "T2-Toxin", "Zearalenone", 
+                                    "Acetamiprid", "Azoxystrobin", "Boscalid", "Carbendazim", "Chlorantraniliprole", "Clothianidin", "Fludioxonil", "Fluopyram", "Imazalil", "Imidacloprid", "Malation", "Propiconazole", "Pyraclostrobin", "Pyrimethanil", "Tebuconazole", "Thiabendazole", "Thiamethoxam",
+                                    "PFOA", "PFNA", 
+                                    "Cocaine", "Heroin", "MDMA", "Methamphetamine", "Nicotine", 
+                                    "o-Anisidin", "Caffeine", "Catechol", "Melamine", "NMOR", "Serotonin", "Tributyl-PO4", "Triphenyl-PO4"))
+data$compound.group <- as.factor(data$compound.group)
+levels(data$compound.group)
+data$compound.group <- factor(data$compound.group, 
+                           levels=c("Bisphenol", "Mycotoxins", "Pesticides", "PFAS", "Substances of abuse", "Other"))
+
+ggplot(data, aes(x = compound, y = community)) +
+  geom_tile(aes(fill = percent)) +
+  geom_text(aes(label = round(percent, 0)), size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(), axis.title.y = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, color = "black"),
+        axis.text.y = element_text(color = "black"),
+        text = element_text(size = 10),
+        strip.background = element_blank()) +
+  scale_fill_gradient2(name = "Supernatant\nrecovery [%]", low = "blue", mid = "white", high = "white", midpoint = 100) +
+  facet_grid(cols = vars(compound.group), scales = "free_x", space = "free_x")
+ggsave("results/assay1_heatmap_detailed.png",
+       width = 30, height = 6, units = "cm")
+
+ggplot(data, aes(x = compound, y = community)) +
+  geom_tile(aes(fill = percent)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(), axis.title.y = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, color = "black"),
+        axis.text.y = element_text(color = "black"),
+        text = element_text(size = 10),
+        strip.background = element_blank()) +
+  scale_fill_gradient2(name = "Supernatant\nrecovery [%]", low = "blue", mid = "white", high = "white", midpoint = 100) +
+  facet_grid(cols = vars(compound.group), scales = "free_x", space = "free_x")
+ggsave("results/assay1_heatmap.png",
+       width = 30, height = 6, units = "cm")
+
+ggplot(data, aes(x = compound, y = community)) +
+  geom_tile(aes(fill = hit), , color = "black") +
+  scale_fill_manual(values = c("grey", "white")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(), axis.title.y = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, color = "black"),
+        axis.text.y = element_text(color = "black"),
+        text = element_text(size = 10),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(compound.group), scales = "free_x", space = "free_x")
+ggsave("results/assay1_heatmap_simple.pdf",
+       width = 30, height = 4.7, units = "cm")
+
+write.table(data,
+            file = "results/assay1_heatmap.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+
+
+
+
+
+
+

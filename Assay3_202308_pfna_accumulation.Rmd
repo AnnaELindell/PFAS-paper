@@ -1,0 +1,744 @@
+---
+title: "PFNA accumulating strains"
+author: "Anna Lindell"
+date: "August 2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+library(ggh4x)
+library(ggplot2)
+```
+
+
+
+
+# Quality control
+
+Internal standard:
+```{r eval = FALSE}
+data <- read.table(file = "data/assay3_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+is <- data %>% filter(group != "Blank")
+
+ggplot(is, aes(x = file, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~batch, scales = "free") +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/assay3_is.png",
+       width = 20, height = 15, units = "cm")
+
+cv.is.data <- print.data.frame(is %>% group_by(batch) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+
+summary(cv.is.data$cv)
+```
+
+
+|          | Min   | Median | Mean  | Max    |
+|----------|-------|--------|-------|--------|
+| IS       | 5.2 % | 13.6 % | 16 %  | 40 %   |
+
+
+
+
+
+
+Quality control:
+```{r eval = FALSE}
+qc <- data %>% filter(group == "QC")
+
+ggplot(qc, aes(x = file, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~batch, scales = "free") +
+  labs(y = "Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/assay3_qc_resp.png",
+       width = 20, height = 15, units = "cm")
+
+ggplot(qc, aes(x = file, y = ratio)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~batch, scales = "free") +
+  labs(y = "Ratio", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/assay3_qc_ratio.png",
+       width = 20, height = 15, units = "cm")
+
+cv.qc.resp <- print.data.frame(qc %>% group_by(batch) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+cv.qc.ratio <- print.data.frame(qc %>% group_by(batch) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), ratio))
+
+summary(cv.qc.resp$cv)
+summary(cv.qc.ratio$cv)
+
+rm(list = ls())
+```
+
+|          | Min   | Median | Mean  | Max    |
+|----------|-------|--------|-------|--------|
+| Response | 1.3 % | 6.3 %  | 14 %  | 56 %   |
+| Ratio    | 2.9 % | 8.7 %  | 14 %  | 31 %   |
+
+
+QC's quite stabel over time. Slight signal drift for some compounds.
+
+Using the Response or ratio does not make a big change for the QC. Concentration calculated based on compounds response.
+
+
+
+
+
+# Median Reduction:
+
+```{r eval = FALSE}
+data <- read.table(file = "data/assay3_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>% 
+  filter(group %in% c("Compound control", "Supernatant", "Whole culture"))
+
+cc_median <- data %>%
+  filter(group == "Compound control") %>%
+  group_by(batch) %>%
+  summarise(median = median(conc)) 
+
+n <- data %>%
+  group_by(batch) %>%
+  count()
+n <- n$n
+
+cc_median <- cc_median$median
+cc_median <- rep(cc_median,  n)
+
+median <- data %>%
+  arrange(experiment, batch, compound, strain, group, replicate) %>%
+  mutate(percent = conc / cc_median * 100)
+
+write.table(median,
+            file = "data/assay3_medianreduction.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+
+
+### Plot Samples
+
+Plot data:
+```{r eval = FALSE}
+data <- read.table(file = "data/assay3_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+bat <- unique(data$batch)
+
+for (c in seq_along(bat)) {
+  subset <- data %>% filter(batch == bat[c])
+  control <- subset %>% filter(group == "Compound control")
+  median <- median(control$conc)
+  plot <- ggplot(subset, aes(x = group, y = conc)) +
+    geom_hline(yintercept = median, color = "grey") +
+    geom_jitter(width = 0.1, size = 3, shape = 1) +
+    facet_grid(~strain.id, scales = "free_x") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+          text = element_text(size=10),
+          axis.text.x = element_text(size=10, angle = 90, , vjust = 0.5, hjust = 0.5, color = "black"),
+          axis.text.y = element_text(size=10, color = "black"),
+          axis.title.x = element_blank(),
+          strip.background = element_blank()) +
+    labs(y = "PFNA Recovery [uM]") +
+    ylim(0,NA)
+  ggsave(plot,
+           file = paste("figures/batch", bat[c], "_conc.png", sep = ""),
+           width = 40, height = 7, units = "cm")
+}
+
+
+ggplot(subset(data, data$group != "Compound control"), aes(x = group, y = percent)) +
+  geom_hline(yintercept = 100, color = "grey") +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  facet_wrap(~strain.id) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust = 0.5, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "PFNA recovery [%]") +
+  ylim(0,NA)
+ggsave(file = "results/assay3_percent.png",
+       width = 50, height =50, units = "cm")
+
+rm(list = ls())
+```
+
+
+
+
+
+# Statistical analysis
+
+T-test:
+```{r eval=FALSE}
+data <- read.table(file = "data/assay3_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+bugs <- subset(data, data$strain != "Compound control")
+control <- subset(data, data$strain == "Compound control")
+
+bat <- unique(bugs$batch)
+strains <- unique(bugs$strain)
+lev <- unique(bugs$group)
+
+n <- 1
+p_value <- data.frame(batch = numeric(),
+                      strain = character(),
+                      group = character(),
+                      p.value = numeric())
+for (c in seq_along(bat)) {
+  bugs1 <- bugs %>% filter(batch == bat[c])
+  control1 <- control %>% filter(batch == bat[c])
+  for (i in seq_along(strains)) {
+    bugs2 <- bugs1 %>% filter(strain == strains[i])
+    if(nrow(bugs2) ==0) next
+    for (l in seq_along(lev)) {
+      bugs3 <- bugs2 %>% filter(group == lev[l])
+      test <- t.test(x = bugs3$conc, y = control1$conc, alternative = "two.sided")
+      p_value[n, 1:4] <- c(bat[c], strains[i], lev[l], test$p.value)
+      n <- n + 1
+    }
+  }
+}
+
+p_value$p.value <- as.numeric(p_value$p.value)
+data$batch <- as.character(data$batch)
+
+adj_data <- p_value %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr")) %>%
+  arrange(batch, strain, group)
+
+new.data <- data %>%
+  group_by(experiment, batch, strain.id, strain, group, compound, unit) %>%
+  summarise(conc = median(conc),
+            percent = median(percent)) %>%
+  full_join(adj_data, by = c("batch", "strain", "group"))
+
+# take mean of same B. uniformis strains from batch 1 and 3
+bu <- new.data %>% 
+  filter(strain.id == "NT5002") %>%
+  group_by(experiment, strain.id, strain, group, compound, unit) %>%
+  summarize(conc = mean(conc),
+            percent = mean(percent),
+            p.value = mean(p.value),
+            p_adj = mean(p_adj)) %>%
+  add_column(batch = rep("1 & 3", 2))
+new.data <- new.data %>%
+  filter(strain.id != "NT5002") %>%
+  rbind(bu)
+
+# add hit column
+new.data$significant <- ifelse(new.data$percent <= 80 & new.data$p_adj < 0.05, "yes", "no")
+
+# save data file
+write.table(new.data,
+            file = "results/assay3_results.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+
+
+# Results analysis:
+
+Plot supernatant reduction in heatmap:
+```{r eval = FALSE}
+data <- read.table(file = "results/assay3_results.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>%
+  filter(group == "Supernatant") %>%
+  mutate(percent.accumulation = 100 - percent)
+data$percent.accumulation[data$percent.accumulation < 0] <- 0
+
+ggplot(data, aes(x = group, y=fct_rev(strain))) +
+  geom_tile(aes(fill = percent.accumulation), color = "black") +
+  geom_text(aes(label = round(percent.accumulation, 0))) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black", face = "italic"),
+        text = element_text(size = 10)) +
+  scale_fill_gradient2(name = "PFNA accumulation [%]", high = "#6f89a2", low = "white", limits=c(0,100))
+ggsave(file = "results/assay3_heatmap_detailed.png",
+       width = 12, height = 50, units = "cm")
+
+ggplot(data, aes(x = group, y=fct_rev(strain))) +
+  geom_tile(aes(fill = percent.accumulation), color = "black") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black", face = "italic"),
+        text = element_text(size = 10)) +
+  scale_fill_gradient2(name = "PFNA accumulation [%]", high = "#6f89a2", low = "white", limits=c(0,100))
+ggsave(file = "results/assay3_heatmap.png",
+       width = 12, height = 50, units = "cm")
+
+write.table(data,
+            file = "results/assay3_heatmap.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+Plot distributions:
+```{r eval = FALSE}
+data <- read.table(file = "results/assay3_heatmap.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+# plot total distribution
+ggplot(data, aes(x = percent.accumulation)) +
+  geom_density() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        text = element_text(size = 10)) +
+  labs(x = "PFNA accumulation [%]", y = "Density")
+ggsave(file = "results/assay3_distribution.png",
+       width = 10, height = 10, units = "cm")
+
+# add strain data and save
+strains <- read.table(file = "data/strains.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+data.strains <- merge(data, strains, by = c("strain", "strain.id"), all = TRUE)
+
+write.table(data.strains,
+            file = "results/assay3_distribution_gram_phylum.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+# plot gram strain distribution
+ggplot(subset(data.strains, phylum != "Yeast"), aes(x = percent.accumulation, linetype = gram.stain)) +
+  geom_density() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        axis.title.x = element_text(size = 10, color = "black"),
+        axis.title.y = element_text(size = 10, color = "black"),
+        text = element_text(size = 10),
+        legend.position = c(0.75, 0.8),
+        legend.key.size = unit(0.6,"line"),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)) +
+  labs(x = "PFNA accumulation [%]", y = "Density", linetype = "Gram-stain")
+ggsave(file = "results/assay3_distribution_gramstain.png",
+       width = 10, height = 10, units = "cm")
+
+ggplot(data.strains, aes(x = phylum, y = percent.accumulation)) +
+  geom_violin(width = 1) +
+  geom_jitter(aes(color = phylum), width = 0.1, size = 2, alpha = 0.5) +
+  guides(fill="none") +
+  scale_color_manual(values = c("#ee3f36", "#ee8300", "#8bc53f", "#f9ec31", "#ee00ee", "#00afee", "grey")) +
+  scale_fill_manual(values = c("#ee3f36", "#ee8300", "#8bc53f", "#f9ec31", "#ee00ee", "#00afee", "grey")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 10, color = "black"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 10, color = "black"),
+        text = element_text(size = 10),
+        legend.position = "none") +
+  labs(y = "PFNA accumulation [%]")
+ggsave(file = "results/assay3_phylum_violin.pdf",
+       width = 10, height = 8, units = "cm")
+
+rm(list = ls())
+```
+
+
+
+
+Correlation between growth and resting screen:
+```{r eval = FALSE}
+data <- read.table(file = "results/correlation_growth_resting/assay2_3_correlation.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+cor.test(data$acc.growth, data$acc.rest, method = "pearson")
+# r = 0.76; p = 0.002; strong positive correlation
+cor.test(data$acc.growth, data$acc.rest, method = "spearman")
+# rho = 0.64; p = 0.015; strong positive correlation
+
+library(ggpubr)
+ggplot(data, aes(x = acc.growth, y = acc.rest)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  stat_regline_equation(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~~")), size = 3, label.x = 1, label.y = 50) +
+  annotate(geom="text", label="r = 0.76; p = 0.002", x=17, y=47, size = 3) +
+  annotate(geom="text", label="rho = 0.64; p = 0.015", x=17, y=44, size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        axis.title.x = element_text(size = 10, color = "black"),
+        axis.title.y = element_text(size = 10, color = "black"),
+        text = element_text(size = 10)) +
+  labs(y = "PFNA accumulation in resting assay [%]", x = "PFNA accumulation in growth assay [%]")
+ggsave(file = "results/correlation_growth_resting/assay3_correlation.png",
+       width = 10, height = 10, units = "cm")
+
+
+# Correlation between growth and resting screen for OD corrected accumulation:
+ggplot(data, aes(x = norm.acc.growth, y = norm.acc.rest)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  stat_regline_equation(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~~")), size = 3, label.x = 1, label.y = 15) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        axis.title.x = element_text(size = 10, color = "black"),
+        axis.title.y = element_text(size = 10, color = "black"),
+        text = element_text(size = 10)) +
+  labs(y = "Normalised PFNA accumulation in resting assay [%]", x = "Normalised PFNA accumulation in growth assay [%]")
+ggsave(file = "results/correlation_growth_resting/assay3_OD_corrected_correlation.png",
+       width = 10, height = 10, units = "cm")
+
+# Correlation between growth and resting screen for OD corrected accumulation after removing outlier:
+data1 <- data %>% filter(id != "NT5021")
+
+cor.test(data1$acc.growth, data1$acc.rest, method = "pearson")
+# r = 0.73; p = 0.004; strong positive correlation
+cor.test(data1$acc.growth, data1$acc.rest, method = "spearman")
+# rho = 0.56; p = 0.049; strong positive correlation
+
+ggplot(data, aes(x = norm.acc.growth, y = norm.acc.rest)) +
+  geom_point() +
+  geom_smooth(data = data1, method = "lm", se = F) +
+  stat_regline_equation(data = data1, aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~~")), size = 3, label.x = 1, label.y = 15) +
+  annotate(geom="text", label="r = 0.73; p = 0.004", x=17, y=14, size = 3) +
+  annotate(geom="text", label="rho = 0.56; p = 0.049", x=17, y=13, size = 3) +
+  annotate(geom="text", label="Outlier excluded", x=57, y=3.3, size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        axis.title.x = element_text(size = 10, color = "black"),
+        axis.title.y = element_text(size = 10, color = "black"),
+        text = element_text(size = 10)) +
+  labs(y = "Normalised PFNA accumulation in resting assay [%]", x = "Normalised PFNA accumulation in growth assay [%]")
+ggsave(file = "results/correlation_growth_resting/assay3_OD_corrected_correlation_outlier_removed.pdf",
+       width = 10, height = 10, units = "cm")
+
+rm(list = ls())
+```
+
+
+
+Gaussion micture models:
+```{r eval = FALSE}
+library(mclust)
+
+# read in data
+data <- read.table(file = "results/assay3_heatmap.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+# The Mclust function is used to fit Gaussian mixture models (G=2 components, allowing variances to be unequal (model="V")).
+fit = Mclust(data$percent.accumulation, G=2, model="V")
+summary(fit)
+
+# plot the resulting density plot
+plot(fit, what="density", main="", xlab="Percent accumulation [%}")
+
+# filter out data, classification and uncertainty
+fit_data <- data.frame(percent.accumulation = fit$data, 
+                       classification = fit$classification, 
+                       uncertainty = fit$uncertainty)
+
+# merge data and fit_data
+new_data <- merge(data, fit_data, by = "percent.accumulation")
+
+new_data <- new_data %>%
+  select(experiment, batch, strain.id, strain, percent.accumulation, classification, uncertainty) %>%
+  arrange(strain)
+
+write.table(new_data,
+            file = "results/assay3_mixture_model.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+strains <- read.table(file = "data/strains.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+new_data_strains <- merge(new_data, strains, by = c("strain", "strain.id"), all = TRUE)
+
+count(new_data_strains, classification)
+
+rm(list = ls())
+```
+
+
+
+Species level abundance, prevalence, accumulation analysis:
+```{r eval = FALSE}
+data <- read.table(file = "results/abundance_prevalence/assay3_abundance_prevalence.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data$classification <- as.factor(data$classification)
+levels(data$classification)
+levels(data$classification) <- c("low-acccumulating species","high-accumulating species")
+
+
+# distribution of abundance by class
+ggplot(data, aes(x = abundance, color = classification)) +
+  geom_density() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        axis.title.x = element_text(size = 10, color = "black"),
+        axis.title.y = element_text(size = 10, color = "black"),
+        text = element_text(size = 10),
+        legend.position = c(0.7, 0.8),
+        legend.key.size = unit(0.6,"line"),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)) +
+  labs(x = "Abundance [%]", y = "Density", color = "Classification")
+ggsave(file = "results/abundance_prevalence/assay3_distribution_abundance.png",
+       width = 10, height = 10, units = "cm")
+
+# distribution of prevalence by class
+ggplot(data, aes(x = prevalence, color = classification)) +
+  geom_density() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        axis.title.x = element_text(size = 10, color = "black"),
+        axis.title.y = element_text(size = 10, color = "black"),
+        text = element_text(size = 10),
+        legend.position = c(0.5, 0.1),
+        legend.key.size = unit(0.6,"line"),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)) +
+  labs(x = "Prevalence [%]", y = "Density", color = "Classification")
+ggsave(file = "results/abundance_prevalence/assay3_distribution_prevalence.png",
+       width = 10, height = 10, units = "cm")
+
+
+# correlation between prevalence and PFNA accumulation
+cor.test(data$prevalence, data$percent.accumulation, method = "pearson")
+# r = 0.17; p = 0.26; no significant correlation
+cor.test(data$prevalence, data$percent.accumulation, method = "spearman")
+# rho = 0.15; p = 0.29; no significant correlation
+
+ggplot(data, aes(x = prevalence, y = percent.accumulation)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = T) +
+  stat_regline_equation(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~~")), size = 3, label.x = 1, label.y = 60) +
+  annotate(geom="text", label="r = 0.17; p = 0.26", x=20, y=55, size = 3) +
+  annotate(geom="text", label="rho = 0.15; p = 0.29", x=20, y=50, size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        axis.title.x = element_text(size = 10, color = "black"),
+        axis.title.y = element_text(size = 10, color = "black"),
+        text = element_text(size = 10)) +
+  labs(x = "Prevalence [%]", y = "PFNA accumulation [%]")
+ggsave(file = "results/abundance_prevalence/assay3_cor_accumulation_prevalence.pdf",
+       width = 10, height = 10, units = "cm")
+
+
+# correlation between abundance and PFNA accumulation
+cor.test(data$abundance, data$percent.accumulation, method = "pearson")
+# r = 0.2; p = 0.17; no significant correlation
+cor.test(data$abundance, data$percent.accumulation, method = "spearman")
+# rho = 0.21; p = 0.16; no significant correlation
+
+ggplot(data, aes(x = abundance, y = percent.accumulation)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = T) +
+  stat_regline_equation(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~~")), size = 3, label.x = log10(0.2), label.y = 7) +
+  annotate(geom="text", label="r = 0.17; p = 0.26", x=0.7, y=4, size = 3) +
+  annotate(geom="text", label="rho = 0.15; p = 0.29", x=0.7, y=1, size = 3) +
+  scale_x_log10() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        axis.title.x = element_text(size = 10, color = "black"),
+        axis.title.y = element_text(size = 10, color = "black"),
+        text = element_text(size = 10)) +
+  labs(x = "Abundance [%]", y = "PFNA accumulation [%]")
+ggsave(file = "results/abundance_prevalence/assay3_cor_accumulation_abundance.pdf",
+       width = 10, height = 10, units = "cm")
+
+rm(list = ls())
+```
+
+
+
+
+Plot results summary:
+```{r eval = FALSE}
+strains <- read.table(file = "data/strains.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+mm <- read.table(file = "results/assay3_mixture_model.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- merge(mm, strains, by = c("strain", "strain.id"), all = TRUE)
+data <- data %>%
+  select(strain.id, strain, phylum, gram.stain, percent.accumulation, classification) %>%
+  mutate_at(c("classification"), as.factor) %>%
+  mutate(classification = recode_factor(classification, "1" = "low-accumulating", "2" = "high-accumulating"))
+
+write.table(data,
+            file = "results/assay3_results_summary.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+# make phylum pie chart
+phylum <- data %>%
+  count(phylum)
+png(file = "results/assay3_phylum_piechart.pdf")
+pie(x = phylum$n, labels = phylum$phylum, col = c("#a8a8a7", "#ee3f36", "#ee8300", "#8bc53f", "#f9ec31", "#ee00ee", "#00afee"), angle = 45)
+dev.off()
+ggplot(phylum, aes(x = "", y = n, fill = phylum)) +
+  geom_bar(stat = "identity") +
+  coord_polar("y", start = 0, direction = -1) +
+  scale_fill_manual(values = c("#a8a8a7", "#ee3f36", "#ee8300", "#8bc53f", "#f9ec31", "#ee00ee", "#00afee")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),)
+ggsave(file = "results/assay3_piechart_phylum.pdf",
+       width = 10, height = 10, units = "cm")
+
+# make phylum stacked bar chart
+phylum <- data %>%
+  count(phylum)
+ggplot(phylum, aes(x = "", y = n, fill = phylum)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("#ee3f36", "#ee8300", "#8bc53f", "#f9ec31", "#ee00ee", "#00afee", "#a8a8a7")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),)
+ggsave(file = "results/assay3_barplot_phylum.png",
+       width = 10, height = 10, units = "cm")
+
+# phylum heatmap
+ggplot(data, aes(x = 1, y=fct_rev(strain))) +
+  geom_tile(aes(fill = phylum), color = "black") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black", face = "italic"),
+        text = element_text(size = 10)) +
+  scale_fill_manual(values = c("#ee3f36", "#ee8300", "#8bc53f", "#f9ec31", "#ee00ee", "#00afee", "#a8a8a7"))
+ggsave(file = "results/assay3_heatmap_phylum.png",
+       width = 12, height = 50, units = "cm")
+
+# gram-stain heatmap
+ggplot(data, aes(x = 1, y=fct_rev(strain))) +
+  geom_tile(aes(fill = gram.stain), color = "black") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black", face = "italic"),
+        text = element_text(size = 10))
+ggsave(file = "results/assay3_heatmap_gramstain.png",
+       width = 12, height = 50, units = "cm")
+
+# classification heatmap
+ggplot(data, aes(x = 1, y=fct_rev(strain))) +
+  geom_tile(aes(fill = classification), color = "black") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black", face = "italic"),
+        text = element_text(size = 10)) +
+  scale_fill_manual(values = c("#c9c9c9", "#424242"))
+ggsave(file = "results/assay3_heatmap_class.pdf",
+       width = 12, height = 50, units = "cm")
+```
