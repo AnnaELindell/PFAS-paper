@@ -1,0 +1,377 @@
+---
+title: "PFAS Mix accumulation"
+author: "Anna Lindell"
+date: "November 2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+library(ggh4x)
+```
+
+
+
+
+
+# Quality control
+
+Read in data:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu18_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+
+Internal standard:
+```{r eval = FALSE}
+is <- data %>% add_column(number = 1:nrow(data)) %>%
+  filter(group != "Blank")
+
+ggplot(is, aes(x = number, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~is, scales = "free_x") +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu18_is.png",
+       width = 15, height = 15, units = "cm")
+
+print.data.frame(is %>% group_by(is) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+```
+
+Coefficient of variation for labelled standards 7-8.6 %
+
+
+
+
+Quality control:
+```{r eval = FALSE}
+qc <- data %>% filter(group == "QC")
+
+ggplot(qc, aes(x = file, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free_x") +
+  labs(y = "Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu18_qc_resp.png",
+       width = 15, height = 15, units = "cm")
+
+ggplot(qc, aes(x = file, y = ratio)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free_x") +
+  labs(y = "Ratio", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu18_qc_ratio.png",
+       width = 15, height = 15, units = "cm")
+
+print.data.frame(qc %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+print.data.frame(qc %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), ratio))
+
+rm(list = ls())
+```
+
+Coefficient of variation for QC response 1-6 %
+Coefficient of variation for QC ratio 1-6 %
+
+--> Ratio used for concentration calculations
+
+
+
+
+
+# Median Reduction:
+
+The median reduction was calculated based on the exposure amount of 1mg/l, because for long chain PFAS
+```{r eval = FALSE}
+data <- read.table(file = "data/fu18_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>%
+  filter(group %in% c("Compound control","Supernatant","Whole culture","Pellet"))
+
+median <- data %>%
+  arrange(experiment, compound, strain, group, replicate) %>%
+  mutate(percent = conc / 1 * 100)
+
+write.table(median,
+            file = "data/fu18_medianreduction.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+# Plot samples
+
+cc, p, sn, wc:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu18_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data.summary <- data %>%
+  group_by(compound, strain, group) %>%
+  summarise(percent = median(percent)) %>%
+  pivot_wider(id_cols = c(compound, strain), names_from = group, values_from = percent) %>%
+  select(-c('Compound control')) %>%
+  filter(strain != "Compound control")
+
+write.table(data.summary,
+            file = "results/fu18_percentage_summary.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+
+data$strain <- as.factor(data$strain)
+levels(data$strain)
+data$strain <- factor(data$strain, levels = c("Compound control", "B. uniformis", "E. coli BW25113", "E. coli BW25113 delta-tolC"))
+data$compound <- as.factor(data$compound)
+levels(data$compound)
+data$compound <- factor(data$compound, levels = c("PFBA", "PFBS", "PFPeA", "PFHxA", "PFHxS", "PFHpA", "PFOA", "PFOS", "PFNA", "PFDA", "PFUnDA", "PFDoDA", "PFTrDA", "PFTA"))
+
+ggplot(data, aes(x = group, y = percent)) +
+  geom_jitter(width = 0.1, size = 2, shape = 1) +
+  facet_grid(cols = vars(strain), rows = vars(compound), scales = "free") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust = 1, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "PFAS recovery [%]") +
+  ylim(0,NA)
+ggsave(file = "results/fu18_pfas_percent.pdf",
+       width = 10, height = 30, units = "cm")
+
+ggplot(data, aes(x = group, y = conc)) +
+  geom_jitter(width = 0.1, size = 2, shape = 1) +
+  facet_grid(cols = vars(strain), rows = vars(compound), scales = "free_x") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust = 1, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "Concentration [mg/l]")
+ggsave(file = "results/fu18_pfas_conc.png",
+       width = 10, height = 30, units = "cm")
+
+data.sum <- data %>%
+  group_by(compound, strain, group) %>%
+  summarise(se = sd(percent)/length(percent), len = median(percent))
+
+ggplot(data.sum, aes(x = compound, y = len, fill = group)) +
+  geom_bar(stat = "identity", position = position_dodge(0.7), width = 0.7) +
+  geom_errorbar(aes(ymin = len-se, ymax = len+se), position = position_dodge(0.7), width = 0.4) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black", angle = 90, vjust = 0.5),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "PFAS recovery [%]") +
+  facet_grid(rows = vars(strain))
+ggsave(file = "results/fu18_pfas_percent_barchart_se.png",
+           width = 20, height = 10, units = "cm")
+```
+
+
+Plot sn depletion:
+```{r eval = FALSE}
+sn <- data %>% filter(group == "Supernatant")
+
+ggplot(sn, aes(x = conc, y = compound)) +
+  geom_vline(xintercept = 1, color = "grey80") +
+  geom_point(size = 3, shape = 1) +
+  theme_bw() +
+  xlim(0,NA) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(strain)) +
+  labs(x = "PFAS recovery from supernatant [mg/l]")
+ggsave(file = "results/fu18_pfas_conc_sn.pdf",
+           width = 17, height = 10, units = "cm")
+
+ggplot(sn, aes(x = percent, y = compound)) +
+  geom_vline(xintercept = 100, color = "grey80") +
+  geom_point(size = 3, shape = 1) +
+  theme_bw() +
+  xlim(0,NA) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(strain)) +
+  labs(x = "PFAS recovery from supernatant [%]")
+ggsave(file = "results/fu18_pfas_percent_sn.pdf",
+           width = 17, height = 10, units = "cm")
+```
+
+
+Plot pellet accumulation:
+```{r eval = FALSE}
+pellet <- data %>% filter(group == "Pellet")
+
+ggplot(pellet, aes(x = conc, y = compound)) +
+  geom_vline(xintercept = 1, color = "grey80") +
+  geom_point(size = 3, shape = 2) +
+  theme_bw() +
+  xlim(0,NA) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(strain)) +
+  labs(x = "PFAS recovery from pellet [mg/l]")
+ggsave(file = "results/fu18_pfas_conc_pellet.png",
+           width = 17, height = 10, units = "cm")
+
+ggplot(pellet, aes(x = percent, y = compound)) +
+  geom_vline(xintercept = 100, color = "grey80") +
+  geom_point(size = 3, shape = 2) +
+  theme_bw() +
+  xlim(0,NA) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(strain)) +
+  labs(x = "PFAS recovery from pellet [%]")
+ggsave(file = "results/fu18_pfas_percent_pellet.png",
+           width = 17, height = 10, units = "cm")
+
+
+# calculate conc in pellet based on estimated pellet weight from FU11
+fu11.pellet.weight <- data_frame(strain.id = c("NT5002", "BWWT", "BWdC"),
+                                 pellet.mg = c(7.97, 5.44, 5.01))
+
+pellet <- pellet %>%
+  full_join(fu11.pellet.weight, by = "strain.id") %>%
+  mutate(conc2 = conc * 0.0005/ pellet.mg * 1000000)
+  
+
+pellet.sum <- pellet %>%
+  group_by(compound, strain) %>%
+  summarise(se1 = sd(conc)/length(conc), len1 = median(conc),
+            se2 = sd(conc2)/length(conc), len2 = median(conc2))
+
+ggplot(pellet.sum, aes(x = compound, y = len1, fill = strain)) +
+  geom_bar(stat = "identity", position = position_dodge(0.7), width = 0.7) +
+  geom_errorbar(aes(ymin = len1-se1, ymax = len1+se1), position = position_dodge(0.7), width = 0.4) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black", angle = 90, vjust = 0.5),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "PFAS pellet recovery [mg/l]")
+ggsave(file = "results/fu18_pfas_conc_pellet_barchart_se_1.png",
+           width = 20, height = 5, units = "cm")
+
+ggplot(pellet.sum, aes(x = compound, y = len2, fill = strain)) +
+  geom_bar(stat = "identity", position = position_dodge(0.7), width = 0.7) +
+  geom_errorbar(aes(ymin = len2-se2, ymax = len2+se2), position = position_dodge(0.7), width = 0.4) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black", angle = 90, vjust = 0.5),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "PFAS pellet concentration [mg/l]")
+ggsave(file = "results/fu18_pfas_conc_pellet_barchart_se_2.pdf",
+           width = 20, height = 5, units = "cm")
+
+write.table(pellet,
+            file = "results/fu18_pellet_conc.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+Results summary:
+```{r eval = FALSE}
+pellet <- data %>% filter(group == "Pellet")
+
+ggplot(pellet, aes(x = conc, y = compound)) +
+  geom_vline(xintercept = 1, color = "grey80") +
+  geom_point(size = 3, shape = 1) +
+  theme_bw() +
+  xlim(0,NA) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(strain)) +
+  labs(x = "PFAS recovery from pellet [mg/l]")
+ggsave(file = "results/fu18_pfas_conc_pellet.pdf",
+           width = 17, height = 10, units = "cm")
+
+ggplot(pellet, aes(x = percent, y = compound)) +
+  geom_vline(xintercept = 100, color = "grey80") +
+  geom_point(size = 3, shape = 1) +
+  theme_bw() +
+  xlim(0,NA) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(strain)) +
+  labs(x = "PFAS recovery from pellet [%]")
+ggsave(file = "results/fu18_pfas_percent_pellet.pdf",
+           width = 17, height = 10, units = "cm")
+
+rm(list = ls())
+```
+

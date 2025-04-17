@@ -1,0 +1,479 @@
+---
+title: "PFAS pellet recovery"
+author: "Anna Lindell"
+date: "Oktober 2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+library(ggh4x)
+```
+
+
+
+
+
+# Quality control
+
+Internal standard:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu11_data_raw.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+is <- data %>% filter(group != "Blank")
+
+ggplot(is, aes(x = file, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(media)) +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu11_is.png",
+       width = 15, height = 10, units = "cm")
+
+print.data.frame(is %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+
+rm(list = ls())
+```
+
+Internal standard Caffeine is different for mGAM and PBS and pellet and supernatant --> matrix effects
+Coefficient of variation: 45 %
+
+
+
+
+Quality control for response:
+```{r eval = FALSE}
+qc <- read.table(file = "data/fu11_qc.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+ggplot(qc, aes(x = number, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(compound), rows = vars(media), scales = "free_x") +
+  labs(y = "Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu11_qc_resp.png",
+       width = 15, height = 10, units = "cm")
+
+ggplot(qc, aes(x = number, y = ratio)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(compound), rows = vars(media), scales = "free_x") +
+  labs(y = "Ratio", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu11_qc_ratio.png",
+       width = 15, height = 10, units = "cm")
+
+print.data.frame(qc %>% group_by(compound, media) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+print.data.frame(qc %>% group_by(compound, media) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), ratio))
+
+rm(list = ls())
+```
+
+| Compound | Matrix | cv Response | cv Ratio |
+| -------- | ------ | ----------- | -------- |
+| PFHpA    | PBS    | 2 %         | 3.3 %    |
+| PFHpA    | mGAM   | 2.2 %       | 3.6 %    |
+| PFOA     | PBS    | 2.7 %       | 3.9 %    |
+| PFOA     | mGAM   | 1.6 %       | 3 %      |
+| PFNA     | PBS    | 3.2 %       | 4.1 %    |
+| PFNA     | mGAM   | 2.2 %       | 3.7 %    |
+| PFDA     | PBS    | 3.6 %       | 4.8 %    |
+| PFDA     | mGAM   | 10.6 %      | 10.4 %   |
+
+Response used for concentration calculations.
+
+
+
+
+
+# Median Reduction:
+
+```{r eval = FALSE}
+data <- read.table(file = "data/fu11_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+cc_median <- data %>%
+  filter(group == "Compound control") %>%
+  group_by(media, compound) %>%
+  summarise(median = median(conc)) 
+
+n <- data %>%
+  group_by(media, compound) %>%
+  count()
+n <- n$n
+
+cc_median <- cc_median$median
+cc_median <- rep(cc_median,  n)
+
+median <- data %>%
+  arrange(experiment, media, compound, strain, group, replicate) %>%
+  mutate(percent = conc / cc_median * 100)
+
+write.table(median,
+            file = "data/fu11_medianreduction.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+# Plot samples
+
+cc, p, sn:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu11_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data$strain <- as.factor(data$strain)
+levels(data$strain)
+data$strain <- factor(data$strain, levels=c("Compound control", "B. uniformis", "E. coli BW25113", "E. coli BW25113 delta-tolC"))
+data$compound <- as.factor(data$compound)
+levels(data$compound)
+data$compound <- factor(data$compound, levels=c("PFHpA", "PFOA", "PFNA", "PFDA"))
+
+pbs <- data %>%
+  filter(media == "PBS")
+mgam <- data %>%
+  filter(media == "mGAM")
+
+ggplot(pbs, aes(x = group, y = percent)) +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  facet_grid2(rows = vars(compound), cols = vars(strain), scales = "free_x", labeller = label_wrap_gen(width = 13, multi_line = TRUE)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust = 0.5, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "PFAS recovery [%]") +
+  ylim(0,NA)
+ggsave(file = "results/fu11_pbs_percent.pdf",
+           width = 10, height = 15, units = "cm")
+
+ggplot(mgam, aes(x = group, y = percent)) +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  facet_grid2(rows = vars(compound), cols = vars(strain), scales = "free_x", labeller = label_wrap_gen(width = 13, multi_line = TRUE)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust = 0.5, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "PFAS recovery [%]") +
+  ylim(0,NA)
+ggsave(file = "results/fu11_mgam_percent.pdf",
+           width = 10, height = 15, units = "cm")
+
+data$group <- as.factor(data$group)
+levels(data$group)
+data$group <- factor(data$group, levels=c("Compound control", "Supernatant", "Pellet"))
+
+data.sum <- data %>%
+  group_by(media, compound, strain, group) %>%
+  summarise(se = sd(percent)/length(percent),
+            percent = median(percent))
+error_bars <- data.sum %>%
+  arrange(media, compound, strain, desc(group)) %>%
+  group_by(media, compound, strain) %>%
+  mutate(percent_new = cumsum(percent))
+
+ggplot(data.sum, aes(x = strain, y = percent, fill = group)) +
+  geom_bar(stat = "identity") +
+  geom_errorbar(data = error_bars,
+                aes(x = strain, ymax = percent_new + se, ymin = percent_new - se), 
+                width = 0.2) +
+  facet_grid(rows = vars(media), cols = vars(compound), scales = "free_x") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust = 0.5, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "PFAS recovery [%]") +
+  ylim(0,NA)
+ggsave(file = "results/fu11_mgam_percent_barplot.pdf",
+           width = 15, height = 11, units = "cm")
+
+rm(list = ls())
+```
+
+
+
+
+# Statistical analyis
+
+T-test to test if supernatant significantly reduced:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu11_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+samples <- data %>% filter(group == c("Supernatant"))
+controls <- data %>% filter(group == "Compound control")
+
+med <- unique(samples$media)
+comp <- unique(samples$compound)
+strains <- unique(samples$strain)
+
+n <- 1
+p_value <- data.frame(media = character(),
+                      compound = character(),
+                      strain = character(),
+                      p.value = numeric())
+for (m in seq_along(med)) {
+  samples1 <- samples %>% filter(media == med[m])
+  controls1 <- controls %>% filter(media == med[m])
+  for (c in seq_along(comp)) {
+    samples2 <- samples1 %>% filter(compound == comp[c])
+    controls2 <- controls1 %>% filter(compound == comp[c])
+    for (s in seq_along(strains)) {
+      samples3 <- samples2 %>% filter(strain == strains[s])
+      test <- t.test(x = samples3$conc, y = controls2$conc, alternative = "two.sided")
+      p_value[n, 1:4] <- c(med[m], comp[c], strains[s], test$p.value)
+      n <- n + 1
+    }
+  }
+}
+
+adj_data <- p_value %>%
+  group_by(media, strain) %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr")) %>%
+  arrange(media, compound)
+
+write.table(adj_data,
+            file = "results/fu11_p_value_sn.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+
+
+Results summary:
+```{r eval = FALSE}
+median <- data %>%
+  group_by(experiment, media, compound, strain.id, strain, group, unit) %>%
+  summarise(conc = median(conc),
+            percent = median(percent))
+
+write.table(median,
+            file = "results/fu11_results_summary.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+# Results analysis:
+
+Check addition of pellet and supernatant concentration:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu11_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+new.data <- data %>%
+  filter(strain.id != "Compound control") %>%
+  pivot_wider(id_cols = c("media", "compound", "strain.id", "strain", "replicate"), names_from = "group", values_from = "percent") %>%
+  mutate(Sum = Pellet + Supernatant)
+
+new.data.sum <- new.data %>%
+  group_by(media, compound, strain.id, strain) %>%
+  summarise(Pellet = median(Pellet),
+                 Supernatant = median(Supernatant)) %>%
+  mutate(Sum = Pellet + Supernatant)
+
+write.table(new.data,
+            file = "results/fu11_results_sum_calculation.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+write.table(new.data.sum,
+            file = "results/fu11_results_sum_calculation_summary.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+Calculate concentration in pellet based on pellet weight:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu11_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+mw <- data_frame(compound = c("PFHpA", "PFOA", "PFNA", "PFDA"),
+                 molecular.weight = c(364.06, 414.07, 464.08, 514.08))
+
+control <- data %>% 
+  filter(group == "Compound control") %>%
+  group_by(media, compound) %>%
+  summarise(control.conc = median(conc))
+
+pellet.weight <- read.table(file = "data/fu11_pellet_weight.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+pellet.pbs <- data %>%
+  filter(group == "Pellet") %>%
+  select(experiment, media, compound, strain.id, strain, replicate, group, conc, percent) %>%
+  full_join(mw, by = c("compound")) %>%
+  full_join(control, by = c("media", "compound")) %>%
+  full_join(pellet.weight, by = c("media", "compound", "strain.id", "strain", "replicate")) %>%
+  select(-c(tube.mg, tubepellet.mg)) %>%
+  filter(media == "PBS") %>%
+  mutate(pellet.uM.1 = conc * 0.0005 / pellet.mg * 1000000, # volume of culture was 0.5 ml
+         foldchange.1 = pellet.uM.1 / control.conc,
+         pellet.ugl.1 = pellet.uM.1 * molecular.weight,
+         pellet.uM.2 = conc * 0.0005 / (3.75 * 1.3*10^9 / 2 * 1 * 1E-15), # volume of culture was 0.5 ml; 3.75 was OD; average of 1.3*10^9 cells per OD unit; 1um3 volume per cell
+         foldchange.2 = pellet.uM.2 / control.conc,
+         pellet.ugl.2 = pellet.uM.2 * molecular.weight)
+
+pellet.mgam <- data %>%
+  filter(group == "Pellet") %>%
+  select(experiment, media, compound, strain.id, strain, replicate, group, conc, percent) %>%
+  full_join(mw, by = c("compound")) %>%
+  full_join(control, by = c("media", "compound")) %>%
+  full_join(pellet.weight, by = c("media", "compound", "strain.id", "strain", "replicate")) %>%
+  filter(media == "mGAM") %>%
+  select(-c(tube.mg, tubepellet.mg)) %>%
+  mutate(pellet.uM.1 = conc * 0.0005 / pellet.mg * 1000000, # volume of culture was 0.5 ml
+         foldchange.1 = pellet.uM.1 / control.conc,
+         pellet.ugl.1 = pellet.uM.1 * molecular.weight)
+
+pellet <- bind_rows(pellet.pbs, pellet.mgam)
+
+write.table(pellet,
+            file = "results/fu11_results_pellet_concentration.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+pellet.sum <- pellet %>%
+  group_by(experiment, media, compound, strain.id, strain, group) %>%
+  summarise(conc = median(conc),
+            percent = median(percent),
+            molecular.weight = median(molecular.weight),
+            control.conc = median(control.conc),
+            pellet.mg = median(pellet.mg),
+            pellet.uM.1 = median(pellet.uM.1),
+            foldchange.1 = median(foldchange.1),
+            pellet.ugl.1 = median(pellet.ugl.1),
+            pellet.uM.2 = median(pellet.uM.2),
+            foldchange.2 = median(foldchange.2),
+            pellet.ugl.2 = median(pellet.ugl.2))
+
+write.table(pellet.sum,
+            file = "results/fu11_results_pellet_concentration_summary.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+# heatmap
+pellet.sum$compound <- as.factor(pellet.sum$compound)
+levels(pellet.sum$compound)
+pellet.sum$compound <- factor(pellet.sum$compound, levels = c("PFHpA", "PFOA", "PFNA", "PFDA"))
+
+pellet.sum$strain <- as.factor(pellet.sum$strain)
+levels(pellet.sum$strain)
+pellet.sum$strain <- factor(pellet.sum$strain, levels = c("E. coli BW25113 delta-tolC", "E. coli BW25113", "B. uniformis"))
+
+ggplot(pellet.sum, aes(x = compound, y = strain)) +
+  geom_tile(aes(fill = foldchange.1), color = "black") +
+  geom_text(aes(label = round(foldchange.1, 0)), size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(), axis.title.y = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, color = "black"),
+        axis.text.y = element_text(color = "black"),
+        text = element_text(size = 10),
+        strip.background = element_blank()) +
+  scale_fill_gradient(name = "Foldchange", low = "white", high = "#546bab") +
+  facet_wrap(~media)
+ggsave("results/fu11_heatmap_foldchange_1.pdf",
+       width = 11, height = 4, units = "cm")
+
+make_triangles <- function(x, y, point = "up") {
+  x <- as.integer(as.factor((x)))
+  y <- as.integer(as.factor((y)))
+
+  if (point == "up") {
+    newx <- sapply(x, function(x) {
+      c(x - 0.5, x - 0.5, x + 0.5)
+    }, simplify = FALSE)
+    newy <- sapply(y, function(y) {
+      c(y - 0.5, y + 0.5, y + 0.5)
+    }, simplify = FALSE)
+  } else if (point == "down") {
+    newx <- sapply(x, function(x) {
+      c(x - 0.5, x + 0.5, x + 0.5)
+    }, simplify = FALSE)
+    newy <- sapply(y, function(y) {
+      c(y - 0.5, y - 0.5, y + 0.5)
+    }, simplify = FALSE)
+  }
+  data.frame(x = unlist(newx), y = unlist(newy))
+}
+
+newcoord_up <- make_triangles(pellet.sum$compound, pellet.sum$strain)
+newcoord_down <- make_triangles(pellet.sum$compound, pellet.sum$strain, point = "down")
+newcoord_down <- newcoord_down %>% select(xdown = x, ydown = y)  # rename columns
+
+# you need to repeat each row of your previous data frame 3 times
+repdata <- map_df(1:nrow(pellet.sum), function(i) pellet.sum[rep(i, 3), ])
+newdata <- bind_cols(repdata, newcoord_up, newcoord_down)
+
+ggplot(newdata) +
+  geom_polygon(aes(x = x, y = y, fill = foldchange.1, group = interaction(compound, strain)), color = "black", linewidth = 0.1) +
+  geom_polygon(aes(x = xdown, y = ydown, fill = foldchange.2, group = interaction(compound, strain)), color = "black", linewidth = 0.1) +
+  scale_x_continuous(breaks = seq_along(unique(pellet.sum$compound)), 
+                     labels = unique(levels(pellet.sum$compound))) +
+  scale_y_continuous(breaks = seq_along(unique(pellet.sum$strain)),
+                     labels = unique(levels(pellet.sum$strain)))+
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(), axis.title.y = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, color = "black"),
+        axis.text.y = element_text(color = "black"),
+        text = element_text(size = 10),
+        strip.background = element_blank()) +
+  scale_fill_gradient(name = "Foldchange", low = "white", high = "#546bab") +
+  facet_wrap(~media)
+ggsave("results/fu11_heatmap_foldchange_2.pdf",
+       width = 11, height = 4, units = "cm")
+
+```
+
+
+
+
+

@@ -1,0 +1,313 @@
+---
+title: "PFNA - E. coli mutants"
+author: "Anna Lindell"
+date: "12/12/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(ggh4x)
+```
+
+
+
+
+
+# Quality control
+
+Read in data:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu15_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+
+Internal standard:
+```{r eval = FALSE}
+is <- data %>% filter(group != "Blank")
+is <- is[!duplicated(is$file), ]
+
+ggplot(is, aes(x = file, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free_x") +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu15_is.png",
+       width = 15, height = 8, units = "cm")
+
+print.data.frame(is %>% 
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+```
+
+Coefficient of variation for Ibuprofen 10 %
+
+
+
+
+Quality control:
+```{r eval = FALSE}
+qc <- data %>% filter(group == "QC")
+
+ggplot(qc, aes(x = file, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free_x") +
+  labs(y = "Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu15_qc_resp.png",
+       width = 8, height = 5, units = "cm")
+
+ggplot(qc, aes(x = file, y = ratio)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free_x") +
+  labs(y = "Ratio", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/fu15_qc_ratio.png",
+       width = 8, height = 5, units = "cm")
+
+print.data.frame(qc %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+print.data.frame(qc %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), ratio))
+
+rm(list = ls())
+```
+
+| Compound | Response | Ratio |
+|----------|----------|-------|
+| PFDA     | 15.3 %   | 22 %  |
+| PFNA     | 9.9 %    | 16 %  |
+
+--> Response used for concentration calculations
+
+
+
+
+# Median Reduction:
+
+```{r eval = FALSE}
+data <- read.table(file = "data/fu15_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>%
+  filter(group %in% c("Compound control","Supernatant","Whole culture"))
+
+
+cc_median <- data %>%
+  filter(group == "Compound control") %>%
+  group_by(compound) %>%
+  summarise(median = median(conc)) 
+
+n <- data %>%
+  group_by(compound) %>%
+  count()
+n <- n$n
+
+cc_median <- cc_median$median
+cc_median <- rep(cc_median,  n)
+
+median <- data %>%
+  arrange(experiment, compound, strain, group) %>%
+  mutate(percent = conc / cc_median * 100)
+
+write.table(median,
+            file = "data/fu15_medianreduction.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+
+# Plot samples
+
+cc, sn, wc:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu15_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data$strain <- as.factor(data$strain)
+levels(data$strain)
+data$strain <- factor(data$strain, levels=c("Compound control", "E. coli BW25113", "E. coli BW25113 imp4213::FRT", "E. coli BW25113 delta-tolC", "E. coli C43 (DE3)", "E. coli C43 (DE3) delta-AcrA-AcrB", "E. coli C43 (DE3) delta-AcrA-AcrB-TolC"))
+
+ggplot(data, aes(x = group, y = percent, shape = group)) +
+  geom_jitter(width = 0.1, size = 3) +
+  facet_grid2(cols = vars(strain), rows = vars(compound), scales = "free_x", labeller = label_wrap_gen(width = 13, multi_line = TRUE)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black", angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank(),
+        legend.position = "none") +
+  ylim(0,130) +
+  scale_shape_manual(values=c(3,1,0))+
+  labs(y = "PFAS recovery [%]")
+ggsave(file = "results/fu15_percent.pdf",
+       width = 15, height = 10, unit = "cm")
+
+
+
+sn <- data %>% filter(group == "Supernatant")
+
+sn$strain <- as.factor(sn$strain)
+levels(sn$strain)
+sn$strain <- factor(sn$strain, levels=c("E. coli C43 (DE3) delta-AcrA-AcrB-TolC", "E. coli C43 (DE3) delta-AcrA-AcrB", "E. coli C43 (DE3)", "E. coli BW25113 delta-tolC", "E. coli BW25113 imp4213::FRT",  "E. coli BW25113", "Compound control"))
+
+ggplot(sn, aes(x = percent, y = strain, shape = group)) +
+  geom_point(size = 3, shape = 1) +
+  scale_shape_manual(values=c(3, 0)) +
+  theme_bw() +
+  xlim(0,100) +
+  facet_wrap(~compound, ncol = 1) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  labs(x = "Supernatant recovery [%]")
+ggsave(file = "results/fu15_percent_sn.pdf",
+       width = 13, height = 10, unit = "cm")
+
+rm(list = ls())
+```
+
+
+
+
+# Statistical analysis:
+
+Perform t-test:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu15_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+control <- data %>% filter(group == "Compound control")
+samples <- data %>% filter(group != "Compound control")
+
+comp <- unique(samples$compound)
+strains <- unique(samples$strain)
+lev <- c("Supernatant", "Whole culture")
+
+
+n <- 1
+p_value <- data.frame(compound = character(),
+                      strain = character(),
+                      group = character(),
+                      p.value = numeric())
+for (c in seq_along(comp)) {
+  control1 <- control %>% filter(compound == comp[c])
+  samples1 <- samples %>% filter(compound == comp[c])
+  for (s in seq_along(strains)) {
+    samples2 <- samples1 %>% filter(strain == strains[s])
+    for (l in seq_along(lev)) {
+      samples3 <- samples2 %>% filter(group == lev[l])
+      test <- t.test(x = samples3$conc, y = control1$conc, alternative = "two.sided")
+      p_value[n, 1:4] <- c(comp[c], strains[s], lev[l], test$p.value)
+      n <- n + 1
+    }
+  }
+}
+
+adj_data <- p_value %>%
+  group_by(compound) %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr")) %>%
+  arrange(compound)
+```
+
+
+Combine p-value data with median reduction data
+```{r eval = FALSE}
+median <- data %>%
+  group_by(experiment, compound, strain.id, strain, group, unit) %>%
+  summarise(conc = median(conc),
+            percent = median(percent))
+
+new_data <- merge(median, adj_data, by = c("compound", "strain", "group"), all = TRUE)
+new_data$p.value <- as.numeric(new_data$p.value)
+
+write.table(new_data,
+            file = "results/fu15_results.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+Test change comapred to WT:
+```{r eval = FALSE}
+data <- read.table(file = "data/fu15_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+n.bwwt <- data %>% filter(strain.id == "BWWT" & compound == "PFNA" & group == "Supernatant")
+n.bwimp <- data %>% filter(strain.id == "BWimp" & compound == "PFNA" & group == "Supernatant")
+n.bwdc <- data %>% filter(strain.id == "BWdC" & compound == "PFNA" & group == "Supernatant")
+
+n.cwt <- data %>% filter(strain.id == "C43WT" & compound == "PFNA" & group == "Supernatant")
+n.cab <- data %>% filter(strain.id == "C43dAB" & compound == "PFNA" & group == "Supernatant")
+n.cabc <- data %>% filter(strain.id == "C43dABC" & compound == "PFNA" & group == "Supernatant")
+
+d.bwwt <- data %>% filter(strain.id == "BWWT" & compound == "PFDA" & group == "Supernatant")
+d.bwimp <- data %>% filter(strain.id == "BWimp" & compound == "PFDA" & group == "Supernatant")
+d.bwdc <- data %>% filter(strain.id == "BWdC" & compound == "PFDA" & group == "Supernatant")
+
+d.cwt <- data %>% filter(strain.id == "C43WT" & compound == "PFDA" & group == "Supernatant")
+d.cab <- data %>% filter(strain.id == "C43dAB" & compound == "PFDA" & group == "Supernatant")
+d.cabc <- data %>% filter(strain.id == "C43dABC" & compound == "PFDA" & group == "Supernatant")
+
+# PFNA
+t.test(x = n.bwimp$conc, y = n.bwwt$conc, alternative = "two.sided")   # BWWT vs. BWimp not significant
+t.test(x = n.bwdc$conc, y = n.bwwt$conc, alternative = "two.sided")   # BWWT vs. BWdC significant p = 0.005
+t.test(x = n.cab$conc, y = n.cwt$conc, alternative = "two.sided")   # C43WT vs. C43dAB not significant
+t.test(x = n.cabc$conc, y = n.cwt$conc, alternative = "two.sided")   # C43WT vs. C43dABC significant p = 0.003
+
+# PFDA
+t.test(x = d.bwimp$conc, y = d.bwwt$conc, alternative = "two.sided")   # BWWT vs. BWimp not significant
+t.test(x = d.bwdc$conc, y = d.bwwt$conc, alternative = "two.sided")   # BWWT vs. BWdC significant p = 0.011
+t.test(x = d.cab$conc, y = d.cwt$conc, alternative = "two.sided")   # C43WT vs. C43dAB not significant
+t.test(x = d.cabc$conc, y = d.cwt$conc, alternative = "two.sided")   # C43WT vs. C43dABC significant p = 0.013
+
+rm(list = ls())
+```
+
+
+
+
+
+
+
+
+
