@@ -1,0 +1,298 @@
+---
+title: "M1: Mouse fecal pfna"
+author: "Anna Lindell"
+date: "03/06/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+```
+
+
+
+
+# Quality control
+
+Read in data:
+```{r eval = FALSE}
+data <- read.table(file = "data/m1_feces_data_raw.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+Internal standard:
+```{r eval = FALSE}
+is <- data %>%
+  filter(id != "Blank")
+
+ggplot(is, aes(x = file, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/m1_feces_is.png",
+       width = 12, height = 7, units = "cm")
+
+print.data.frame(is %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+```
+
+27.5 % variation for the internal standard (Caffeine).
+
+
+
+Quality control:
+```{r eval = FALSE}
+qc <- data %>% filter(id == "QC")
+
+ggplot(qc, aes(x = file, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/m1_feces_qc_response.png",
+       width = 7, height = 5, units = "cm")
+
+ggplot(qc, aes(x = file, y = ratio)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Ratio", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/m1_feces_qc_ratio.png",
+       width = 7, height = 5, units = "cm")
+
+print.data.frame(qc %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+print.data.frame(qc %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), ratio))
+
+rm(list = ls())
+```
+
+QC: Coefficient of variation 
+PFNA response: 25 %
+PFNA ratio: 8.6 %
+
+
+
+
+# Plot samples
+
+Read in data:
+```{r eval = FALSE}
+data <- read.table(file = "data/m1_feces_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data$group <- as.factor(data$group)
+levels(data$group)
+data$group <- factor(data$group, levels = c("Com20 + DMSO", "GF + PFNA", "Com20 + PFNA"))
+data$cage <- as.factor(data$cage)
+
+data <- data %>%
+  unite(timeloc, c(time.point.d, tissue), sep = " ", remove = FALSE)
+```
+
+
+Plot all samples:
+```{r eval = FALSE}
+ggplot(data, aes(x = group, y = conc2)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA) +
+  geom_jitter(width = 0.1, size = 3, shape = 1, aes(color = sex)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        text = element_text(size=12),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black", angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(size = 10, color = "black")) +
+  facet_wrap(~timeloc, ncol = 6) +
+  labs(y = "PFNA [ug/g feces]") +
+  scale_y_log10()
+ggsave("results/m1_feces_all_dmso_log10.png",
+       width = 20, height = 10, units = "cm")
+
+ggplot(data, aes(x = group, y = conc2, color = sex)) +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        text = element_text(size=12),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black", angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(size = 10, color = "black")) +
+  facet_wrap(~timeloc, ncol = 6) +
+  labs(y = "PFNA [ug/g feces]") +
+  scale_y_log10()
+ggsave("results/m1_feces_all_dmso_log10_sex.png",
+       width = 20, height = 10, units = "cm")
+```
+
+
+Plot data without DMSO control:
+```{r eval = FALSE}
+data1 <- data %>%
+  filter(group != "Com20 + DMSO")
+ggplot(data1, aes(x = group, y = conc2)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA) +
+  geom_jitter(width = 0.1, size = 3, shape = 1, aes(color = sex)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        text = element_text(size=12),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(color = "black", size = 10, angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(color = "black", size = 10)) +
+  facet_wrap(~timeloc, ncol = 6) +
+  labs(y = "PFNA [ug/g feces]") +
+  scale_y_log10()
+ggsave("results/m1_feces_all_log10.png",
+       width = 20, height = 9, units = "cm")
+
+ggplot(data1, aes(x = group, y = conc2, color = sex)) +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        text = element_text(size=12),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(color = "black", size = 10, angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(color = "black", size = 10)) +
+  facet_wrap(~timeloc, ncol = 6) +
+  labs(y = "PFNA [ug/g feces]") +
+  scale_y_log10()
+ggsave("results/m1_feces_all_log10_sex.png",
+       width = 20, height = 10, units = "cm")
+
+rm(list = ls())
+```
+
+
+
+
+
+
+# Statistical test
+
+Read in data:
+```{r eval = FALSE}
+data <- read.table(file = "data/m1_feces_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+Check highest PFNA level in DMSO control and set this as cut off level (anything above this will not be considered for testing):
+```{r eval = FALSE}
+data %>%
+  filter(group == "DMSO") %>%
+  summarize(min = min(concentration.ugg),
+            max = max(concentration.ugg))
+```
+
+
+
+Check highest PFNA level in GF and Com20:
+```{r eval = FALSE}
+data %>%
+  filter(group != "DMSO") %>%
+  group_by(group, time.point) %>%
+  summarize(min = min(concentration.ugg),
+            max = max(concentration.ugg))
+```
+Only day 0 samples are lower than the DMSO control max value, so all data points from 3h, 1d, 2d and 3d can be analysed for significance.
+
+
+
+Mean PFNA levels
+```{r eval = FALSE}
+data %>%
+  filter(group != "DMSO") %>%
+  group_by(group, time.point.d, tissue) %>%
+  summarize(mean.pfna = mean(conc2))
+```
+
+
+Remove DMSO controls for testing:
+```{r eval = FALSE}
+data <- data %>%
+  filter(group != "Com20 + DMSO")
+```
+
+
+Do a two sided student t-test:
+```{r eval = FALSE}
+ttest <- data %>%
+  group_by(time.point.d, tissue) %>%
+  summarize(p.value = t.test(conc2 ~ group, alternative = "two.sided", paired = FALSE, var.equal =TRUE)$p.value)
+```
+
+
+Correction for multiple testing:
+```{r eval = FALSE}
+ttest <- ttest %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr"))
+write.table(ttest,
+            file = "results/m1_feces_pvalues.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+There is a significant difference between GF and Com20 PFNA levels at all tested time points.
+
+
+Calculate fold changed between medians:
+```{r eval = FALSE}
+foldchange <- data %>%
+  group_by(group, time.point.d, tissue) %>%
+  summarize(median = median(conc2)) %>%
+  pivot_wider(names_from = group, values_from = median) %>%
+  mutate(foldchange = `Com20 + PFNA` / `GF + PFNA`)
+write.table(foldchange,
+            file = "results/m1_feces_foldchange.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,311 @@
+---
+title: "Exp4: Mouse fecal pfna"
+author: "Anna Lindell"
+date: "03/06/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+```
+
+
+
+
+# Quality control
+
+Read in data:
+```{r eval = FALSE}
+data <- read.table(file = "data/m4_feces_data_raw.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+Internal standard:
+```{r eval = FALSE}
+is <- data %>%
+  filter(id != "Blank")
+
+ggplot(is, aes(x = file, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/m4_feces_is.png",
+       width = 12, height = 7, units = "cm")
+
+print.data.frame(is %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+```
+
+31.7 % variation for the internal standard (M9PFNA).
+
+
+
+Quality control:
+```{r eval = FALSE}
+qc <- data %>% filter(id == "QC")
+
+ggplot(qc, aes(x = file, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/m4_feces_qc_response.png",
+       width = 7, height = 5, units = "cm")
+
+ggplot(qc, aes(x = file, y = ratio)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_rect(fill="white")) +
+  labs(y = "Ratio", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/m4_feces_qc_ratio.png",
+       width = 7, height = 5, units = "cm")
+
+print.data.frame(qc %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+print.data.frame(qc %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), ratio))
+print.data.frame(qc %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), conc))
+
+rm(list = ls())
+```
+
+QC: Coefficient of variation 
+PFNA response: 9.1 %
+PFNA ratio: 2.2 %
+
+
+
+
+
+# Analysis after normalisation by qubit readout:
+
+```{r eval = FALSE}
+data <- read.table(file = "data/m4_feces_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>%
+  unite(timeloc, c(time.point.d, tissue), sep = " ", remove = FALSE) %>%
+  select(experiment, mouse, group, sex, cage, tissue, time.point.d, timeloc, compound, is, unit2, conc2)
+
+qubit <- read.table(file = "data/m4_feces_qubit.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+qubit <- qubit %>%
+  full_join(data, by = c("mouse", "group", "sex", "cage", "tissue", "time.point.d")) %>%
+  mutate(nq.conc.norm.by.qubit = conc2 / nq.qubit.ngul,
+         q.conc.norm.by.qubit = conc2 / (q.qubit.ngul / fecesweight.mg)) %>%
+  filter(group %in% c("LC + PFNA", "HC + PFNA"))
+
+qubit$group <- as.factor(qubit$group)
+levels(qubit$group)
+qubit$group <- factor(qubit$group, levels = c("LC + PFNA", "HC + PFNA"))
+
+
+# plot qubit readout by mouse
+ggplot(subset(qubit, tissue != "Small Intestine"), aes(x = mouse, y = nq.qubit.ngul)) +
+  geom_point(size = 3, shape = 1) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        text = element_text(size=12),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(color = "black", size = 10, angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(color = "black", size = 10)) +
+  labs(y = "qubit readout [ng/µl]")
+ggsave("results/m4_feces_qubit_individual.png",
+       width = 20, height = 10, units = "cm")
+
+ggplot(qubit, aes(x = group, y = nq.qubit.ngul)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 3, shape = 1, width = 0.2) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        text = element_text(size=12),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(color = "black", size = 10, angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(color = "black", size = 10)) +
+  labs(y = "qubit readout [ng/µl]")
+ggsave("results/m4_feces_qubit.png",
+       width = 10, height = 10, units = "cm")
+
+qubit.lc <- qubit %>% filter(group == "LC + PFNA")
+qubit.hc <- qubit %>% filter(group == "HC + PFNA")
+t.test(qubit.lc$nq.qubit.ngul, qubit.hc$nq.qubit.ngul, alternative = "two.sided") # p = 0.002
+median(qubit.lc$nq.qubit.ngul) / median(qubit.hc$nq.qubit.ngul) # 1.96 fold change
+
+# plot concentration normalised by qubit readout
+ggplot(qubit, aes(x = group, y = nq.conc.norm.by.qubit)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA) +
+  geom_jitter(width = 0.1, size = 3, shape = 1, aes(color = sex)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        text = element_text(size=12),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(color = "black", size = 10, angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(color = "black", size = 10)) +
+  facet_wrap(~timeloc, ncol = 6) +
+  labs(y = "PFNA [µg/g feces normalised by qubit]") +
+  scale_y_log10()
+ggsave("results/m4_feces_log10_norm_qubit_individual.pdf",
+       width = 20, height = 9, units = "cm")
+
+write.table(qubit,
+            file = "data/m4_feces_normqubit.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+
+# T-test
+ttest <- qubit %>%
+  group_by(time.point.d, tissue) %>%
+  summarize(p.value = t.test(nq.conc.norm.by.qubit ~ group, alternative = "two.sided", paired = FALSE, var.equal =TRUE)$p.value) %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr"))
+
+write.table(ttest,
+            file = "results/m4_feces_pvalues_normqubit.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+foldchange <- qubit %>%
+  group_by(group, time.point.d, tissue) %>%
+  summarize(median = mean(nq.conc.norm.by.qubit, na.rm = TRUE)) %>%
+  pivot_wider(names_from = group, values_from = median) %>%
+  mutate(foldchange = `HC + PFNA` / `LC + PFNA`)
+
+write.table(foldchange,
+            file = "results/m4_feces_foldchange_normqubit.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+
+
+Plot normalised PFNA excretion by qubit readout for M1 and M4
+```{r eval = FALSE}
+m4 <- read.table(file = "data/m4_feces_normqubit.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+m1 <- read.table(file = "data/m1_feces_normqubit.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+m1 <- m1 %>%
+  unite(timeloc, c(time.point.d, tissue), sep = " ", remove = FALSE) %>%
+  select(experiment, sample.number, mouse, group, sex, cage, timeloc, tissue, time.point.d, compound, is, unit2, conc2, nq.qubit.ngul, fecesweight.mg, q.qubit.ngul, nq.conc.norm.by.qubit, q.conc.norm.by.qubit)
+m4 <- m4 %>%
+  select(experiment, sample.number, mouse, group, sex, cage, timeloc, tissue, time.point.d, compound, is, unit2, conc2, nq.qubit.ngul, fecesweight.mg, q.qubit.ngul, nq.conc.norm.by.qubit, q.conc.norm.by.qubit)
+
+data <- rbind(m1, m4)
+
+data$group <- as.factor(data$group)
+levels(data$group)
+data$group <- factor(data$group, levels = c("GF + PFNA", "Com20 + PFNA", "LC + PFNA", "HC + PFNA"))
+
+# plot qubit
+ggplot(data, aes(x = group, y = nq.qubit.ngul)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 3, shape = 1, width = 0.2) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        text = element_text(size=12),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(color = "black", size = 10, angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(color = "black", size = 10)) +
+  labs(y = "qubit readout [ng/µl]")
+ggsave("results/m1_vs_m4_feces_qubit_nonquant.pdf",
+       width = 10, height = 10, units = "cm")
+
+ggplot(data, aes(x = group, y = (q.qubit.ngul / fecesweight.mg))) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 3, shape = 1, width = 0.2) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        text = element_text(size=12),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(color = "black", size = 10, angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(color = "black", size = 10)) +
+  labs(y = "qubit readout [ng/µl normalised by fecal weight]")
+ggsave("results/m1_vs_m4_feces_qubit_quant.png",
+       width = 10, height = 10, units = "cm")
+
+
+# plot concentration normalised by qubit readout
+ggplot(data, aes(x = group, y = conc2)) +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        text = element_text(size=12),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(color = "black", size = 10, angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(color = "black", size = 10)) +
+  facet_wrap(~timeloc, ncol = 6) +
+  labs(y = "PFNA [µg/g feces]") +
+  scale_y_log10()
+ggsave("results/m1_vs_m4_feces_conc_log10.png",
+       width = 20, height = 10, units = "cm")
+
+ggplot(subset(data, group != "GF + PFNA"), aes(x = group, y = nq.conc.norm.by.qubit)) +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        text = element_text(size=12),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(color = "black", size = 10, angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(color = "black", size = 10)) +
+  facet_wrap(~timeloc, ncol = 6) +
+  labs(y = "PFNA [µg/g feces normalised by qubit]") +
+  scale_y_log10()
+ggsave("results/m1_vs_m4_feces_normqubit_nq_log10.png",
+       width = 20, height = 10, units = "cm")
+
+ggplot(subset(data, group != "GF + PFNA"), aes(x = group, y = q.conc.norm.by.qubit)) +
+  geom_jitter(width = 0.1, size = 3, shape = 1) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        text = element_text(size=12),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(color = "black", size = 10, angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(color = "black", size = 10)) +
+  facet_wrap(~timeloc, ncol = 6) +
+  labs(y = "PFNA [µg/g feces normalised by qubit]") +
+  scale_y_log10()
+ggsave("results/m1_vs_m4_feces_normqubit_nq_log10.png",
+       width = 20, height = 10, units = "cm")
+
+sum <- data %>%
+  filter(group != "GF + PFNA") %>%
+  group_by(experiment, group, timeloc) %>%
+  summarise(nq.conc.norm.by.qubit = median(nq.conc.norm.by.qubit, na.rm = T),
+            q.conc.norm.by.qubit = median(q.conc.norm.by.qubit, na.rm = T))
+
+```
+

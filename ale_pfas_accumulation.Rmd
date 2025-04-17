@@ -1,0 +1,282 @@
+---
+title: "PFA-accumulation ALE strains"
+author: "Anna Lindell"
+date: "09/03/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+```
+
+
+
+
+
+# Quality control
+
+Read in data:
+```{r eval = FALSE}
+data <- read.table(file = "data/ale_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+
+Internal standard:
+```{r eval = FALSE}
+is <- data %>% filter(group != "Blank")
+
+ggplot(is, aes(x = file, y = is.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free_x") +
+  labs(y = "Internal Standard Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/ale_is.png",
+       width = 15, height = 8, units = "cm")
+
+print.data.frame(is %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), is.resp))
+```
+
+Signal drift of IS for PFNA run.
+
+Coefficient of variation for Ibuprofen 10 %
+PFDA: 6.9 %
+PFNA: 13.2 %
+
+
+
+
+
+Quality control:
+```{r eval = FALSE}
+qc <- data %>% filter(group == "QC")
+
+ggplot(qc, aes(x = file, y = compound.resp)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free_x") +
+  labs(y = "Response", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/ale_qc_resp.png",
+       width = 10, height = 7, units = "cm")
+
+ggplot(qc, aes(x = file, y = ratio)) +
+  geom_point(size = 1.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~compound, scales = "free_x") +
+  labs(y = "Ratio", x = "Data File") +
+  ylim(0, NA)
+ggsave(file = "qualitycontrol/ale_qc_ratio.png",
+       width = 10, height = 7, units = "cm")
+
+print.data.frame(qc %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), compound.resp))
+print.data.frame(qc %>% group_by(compound) %>%
+  summarise_each(funs(median, mean, sd, cv=sd/mean), ratio))
+
+rm(list = ls())
+```
+
+| Compound | Response | Ratio |
+|----------|----------|-------|
+| PFDA     | 7.5 %    | 6.6 % |
+| PFNA     | 19.3 %   | 16 %  |
+
+--> Response used for concentration calculations
+
+
+
+
+# Median Reduction:
+
+```{r eval = FALSE}
+data <- read.table(file = "data/ale_data.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>%
+  filter(group %in% c("Compound control","Supernatant","Whole culture"))
+
+
+cc_median <- data %>%
+  filter(group == "Compound control") %>%
+  group_by(compound) %>%
+  summarise(median = median(conc)) 
+
+n <- data %>%
+  group_by(compound) %>%
+  count()
+n <- n$n
+
+cc_median <- cc_median$median
+cc_median <- rep(cc_median,  n)
+
+median <- data %>%
+  arrange(experiment, compound, strain, group) %>%
+  mutate(percent = conc / cc_median * 100)
+
+write.table(median,
+            file = "data/ale_medianreduction.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+
+# Plot samples
+
+cc, sn, wc:
+```{r eval = FALSE}
+data <- read.table(file = "data/ale_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data$strain <- as.factor(data$strain)
+levels(data$strain)
+data$strain <- factor(data$strain, levels=c("Compound control", "B. thetaiotaomicron", "B. uniformis", "C. difficile", "E. coli BW25113 delta-TolC", "P. merdae"))
+
+data$strain.id <- as.factor(data$strain.id)
+levels(data$strain.id)
+data$strain.id <- factor(data$strain.id, levels=c("Compound control", "5002_parental", "5002_DMSO", "5002_PFDeA", "5002_PFNA", "5004_parental", "5004_DMSO", "5004_PFDeA", "5004_PFNA", "5071_parental", "5071_DMSO", "5071_PFDeA", "5071_PFNA", "5083_parental", "5083_DMSO", "5083_PFDeA", "5083_PFNA", "BWdC_parental", "BWdC_DMSO", "BWdC_PFDeA", "BWdC_PFNA"))
+
+ggplot(data, aes(x = group, y = percent, shape = group)) +
+  geom_jitter(width = 0.1, shape = 1, size = 3) +
+  facet_grid2(cols = vars(strain.id), rows = vars(compound), scales = "free_x", labeller = label_wrap_gen(width = 13, multi_line = TRUE)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black", angle = 90, , vjust = 0.5, hjust = 0.5),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  ylim(0,130) +
+  scale_shape_manual(values=c(3, 0, 2))+
+  labs(y = "PFAS recovery [%]")
+ggsave(file = "results/ale_percent.png",
+       width = 40, height = 10, unit = "cm")
+
+sn <- data %>% 
+  filter(group == "Supernatant") %>%
+  group_by(experiment, strain.id, strain, evolution, group, compound, is) %>%
+  summarise(median.conc = median(conc),
+            median.percent = median(percent))
+
+ggplot(sn, aes(x = median.percent, y = strain, shape = evolution)) +
+  geom_point(size = 3) +
+  scale_shape_manual(values=c(0, 1, 2, 5)) +
+  theme_bw() +
+  xlim(0,100) +
+  facet_wrap(~compound, ncol = 1) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black", face = "italic"),
+        strip.background = element_blank()) +
+  labs(x = "Supernatant recovery [%]")
+ggsave(file = "results/ale_percent_sn_median.pdf",
+       width = 13.5, height = 13, unit = "cm")
+
+rm(list = ls())
+```
+
+
+
+
+# Statistical analysis:
+
+Perform t-test to test whether PFAS evolved strains accumulate more than DMSO evolved strains:
+```{r eval = FALSE}
+data <- read.table(file = "data/ale_medianreduction.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>% filter(group == "Supernatant")
+
+dmso <- data %>% filter(evolution == "DMSO evolved")
+samples <- data %>% filter(evolution %in%  c("PFNA evolved", "PFDA evolved"))
+
+strains <- unique(samples$strain)
+comp <- unique(samples$compound)
+ev <- c("PFNA evolved", "PFDA evolved")
+
+n <- 1
+p_value <- data.frame(strain = character(),
+                      compound = character(),
+                      evolution = character(),
+                      p.value = numeric())
+for (s in seq_along(strains)) {
+  dmso1 <- dmso %>% filter(strain == strains[s])
+  samples1 <- samples %>% filter(strain == strains[s])
+  for (c in seq_along(comp)) {
+    dmso2 <- dmso1 %>% filter(compound == comp[c])
+    samples2 <- samples1 %>% filter(compound == comp[c])
+    for (e in seq_along(ev)) {
+      samples3 <- samples2 %>% filter(evolution == ev[e])
+      test <- t.test(x = samples3$conc, y = dmso2$conc, alternative = "two.sided")
+      p_value[n, 1:4] <- c(strains[s], comp[c], ev[e], test$p.value)
+      n <- n + 1
+    }
+  }
+}
+
+adj_data <- p_value %>%
+  group_by(compound) %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr")) %>%
+  arrange(strain)
+```
+
+No significant differences in PFAS accumulation between DMSO and PFAS evolved strains.
+
+
+Combine p-value data with median reduction data
+```{r eval = FALSE}
+median <- data %>% 
+  filter(group == "Supernatant") %>%
+  group_by(experiment, strain.id, strain, evolution, group, compound, is) %>%
+  summarise(median.conc = median(conc),
+            median.percent = median(percent))
+
+new_data <- merge(median, adj_data, by = c("compound", "strain", "evolution"), all = TRUE)
+new_data$p.value <- as.numeric(new_data$p.value)
+new_data <- new_data %>%
+  select(experiment, strain.id, strain, evolution, group, compound, is, median.conc, median.percent, p.value, p_adj)
+
+write.table(new_data,
+            file = "results/ale_results.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+
+

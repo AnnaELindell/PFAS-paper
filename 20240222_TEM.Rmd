@@ -1,0 +1,290 @@
+---
+title: "TEM Image Quantification"
+author: "Anna Lindell"
+date: "23/01/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+library(tidyverse)
+library(readr)
+library(ggh4x)
+library(ggplot2)
+library(tidystringdist)
+```
+
+
+
+
+Read in and merge data:
+```{r eval = FALSE}
+metadata <- read.table(file = "data/metadata.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- dir(path = "data/", pattern = "*_Cells.csv") %>%
+  map(~ read_csv(file.path("data/", .), 
+                   col_types = cols(),
+                   na = c("", "NA"))) %>%
+  reduce(rbind)
+
+data_combined <- metadata %>%
+  full_join(data, by = "FileName_original")
+
+write.table(data_combined,
+            file = "data/tem_data_combined.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+Plot data (mean/median intensity):
+```{r eval = FALSE}
+data <- read.table(file = "data/tem_data_combined_manualedit.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>% 
+  filter(Included_in_Analysis == TRUE)
+
+data$compound <- as.factor(data$compound)
+levels(data$compound)
+data$compound <- factor(data$compound, levels = c("DMSO", "PFNA_5uM", "PFNA_50uM", "PFNA_125uM", "PFNA_250uM", "PFDA_125uM"))
+
+
+# just B. uniformis:
+uni <- data %>% filter(strain == "B. uniformis")
+
+ggplot(uni, aes(x = compound, y = Intensity_MeanIntensity_RescaleIntensity_to_quantify)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.5, size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "Mean Intesnity")
+ggsave(file = "results/tem_meanintensity_nt5002.png",
+           width = 15, height = 8, units = "cm")
+
+ggplot(uni, aes(x = compound, y = Intensity_MedianIntensity_RescaleIntensity_to_quantify)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.5, size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "Median Intesnity")
+ggsave(file = "results/tem_medianintensity_nt5002.pdf",
+           width = 15, height = 8, units = "cm")
+
+
+# just DMSO and 250uM PFNA:
+sub <- data %>% filter(compound %in% c("DMSO", "PFNA_250uM"))
+
+ggplot(sub, aes(x = compound, y = Intensity_MeanIntensity_RescaleIntensity_to_quantify)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.5, size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~strain, nrow = 1) +
+  labs(y = "Mean Intesnity")
+ggsave(file = "results/tem_meanintensity_dmso_vs_pfna.png",
+           width = 15, height = 8, units = "cm")
+
+ggplot(sub, aes(x = compound, y = Intensity_MedianIntensity_RescaleIntensity_to_quantify)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.5, size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~strain, nrow = 1) +
+  labs(y = "Median Intesnity")
+ggsave(file = "results/tem_medianintensity_dmso_vs_pfna.png",
+           width = 15, height = 8, units = "cm")
+
+rm(list = ls())
+```
+
+
+Plot children aggregates
+```{r eval = FALSE}
+data <- read.table(file = "data/tem_data_combined_manualedit.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>% filter(Included_in_Analysis == TRUE)
+
+data$compound <- as.factor(data$compound)
+levels(data$compound)
+data$compound <- factor(data$compound, levels = c("DMSO", "PFNA_5uM", "PFNA_50uM", "PFNA_125uM", "PFNA_250uM", "PFDA_125uM"))
+
+
+# just B. uniformis:
+uni <- data %>% filter(strain == "B. uniformis")
+
+ggplot(uni, aes(x = compound, y = Children_Aggregates_Count)) +
+  geom_violin() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.5, size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  labs(y = "Aggregates count")
+ggsave(file = "results/tem_aggregatescount_nt5002.png",
+           width = 15, height = 8, units = "cm")
+
+uni.sum <- uni %>% count(compound)
+write.table(uni.sum,
+            file = "results/tem_nt5002_datapoints.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+
+
+# just DMSO and 250uM PFNA:
+sub <- data %>% filter(compound %in% c("DMSO", "PFNA_250uM"))
+
+ggplot(sub, aes(x = compound, y = Children_Aggregates_Count)) +
+  geom_violin() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.5, size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~strain, nrow = 1) +
+  labs(y = "Aggregates count")
+ggsave(file = "results/tem_aggregatescount_dmso_vs_pfna.pdf",
+           width = 15, height = 8, units = "cm")
+
+sub.sum <- sub %>% count(strain, compound)
+write.table(sub.sum,
+            file = "results/tem_dmso_vs_pfna_datapoints.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+
+rm(list = ls())
+```
+
+
+
+T-test: Mean Intesnsity
+```{r eval = FALSE}
+data <- read.table(file = "data/tem_data_combined_manualedit.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>% filter(Included_in_Analysis == TRUE)
+
+control <- data %>% filter(compound == "DMSO")
+sample <- data %>% filter(compound != "DMSO")
+
+strains <- unique(sample$strain)
+comp <- unique(sample$compound)
+
+n <- 1
+p_value <- data.frame(strain = character(),
+                      compound = character(),
+                      p.value = numeric())
+for (s in seq_along(strains)) {
+  samples1 <- sample %>% filter(strain == strains[s])
+  controls1 <- control %>% filter(strain == strains[s])
+  for (c in seq_along(comp)) {
+    samples2 <- samples1 %>% filter(compound == comp[c])
+    if(nrow(samples2) ==0) next
+    test <- t.test(x = samples2$Intensity_MeanIntensity_RescaleIntensity_to_quantify, y = controls1$Intensity_MeanIntensity_RescaleIntensity_to_quantify, alternative = "two.sided")
+    p_value[n, 1:3] <- c(strains[s], comp[c], test$p.value)
+    n <- n + 1
+  }
+}
+
+adj_data <- p_value %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr"))
+
+write.table(adj_data,
+            file = "results/tem_p_value_meanintensity.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+T-test: Aggregates count
+```{r eval = FALSE}
+data <- read.table(file = "data/tem_data_combined_manualedit.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>% filter(Included_in_Analysis == TRUE)
+
+control <- data %>% filter(compound == "DMSO")
+sample <- data %>% filter(compound != "DMSO")
+
+strains <- unique(sample$strain)
+comp <- unique(sample$compound)
+
+n <- 1
+p_value <- data.frame(strain = character(),
+                      compound = character(),
+                      p.value = numeric())
+for (s in seq_along(strains)) {
+  samples1 <- sample %>% filter(strain == strains[s])
+  controls1 <- control %>% filter(strain == strains[s])
+  for (c in seq_along(comp)) {
+    samples2 <- samples1 %>% filter(compound == comp[c])
+    if(nrow(samples2) ==0) next
+    test <- t.test(x = samples2$Children_Aggregates_Count, y = controls1$Children_Aggregates_Count, alternative = "two.sided")
+    p_value[n, 1:3] <- c(strains[s], comp[c], test$p.value)
+    n <- n + 1
+  }
+}
+
+adj_data <- p_value %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr"))
+
+write.table(adj_data,
+            file = "results/tem_p_value_aggregatescount.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+meanaresults <- data %>%
+  group_by(strain.id, strain, compound) %>%
+  summarise(meanintensity = mean(Intensity_MeanIntensity_RescaleIntensity_to_quantify),
+            meanaggregates = mean(Children_Aggregates_Count))
+
+write.table(meanaresults,
+            file = "results/tem_summary.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+
+

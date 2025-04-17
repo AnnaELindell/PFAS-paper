@@ -1,0 +1,742 @@
+---
+title: "ALE Growth Screen"
+author: "Anna Lindell"
+date: "26/01/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+library(growthcurver)
+library(NCmisc)
+library(readtext)
+library(fitdistrplus)
+library(networkD3)
+```
+
+
+# Combining data
+
+
+Read in and combine files:
+```{r  eval = FALSE}
+paths <- Sys.glob("data/data/*.txt")
+data <- Map(read_table, paths)
+data <- dplyr::bind_rows(data, .id = "path")
+```
+
+
+Split path column into strain, concentration, biological.replicate, and technical.replicate column:
+```{r eval = FALSE}
+data <- data %>%
+  separate(path, 
+           c("data1", "data2", "rest"), sep = "/") %>%
+  separate(rest, c("strain.id", "day"), sep = "_") %>%
+  select(-c(data1, data2))
+```
+
+
+Remove unwanted parts of columns:
+```{r eval = FALSE}
+data$day <- gsub(".txt", "", as.character(data$day))
+data$Time <- gsub(":.*", "", as.character(data$Time))
+data <- data %>%
+  rename(time = Time)
+data <- data[-4]
+data <- drop_na(data)
+```
+
+
+Change data format from wide to long:
+```{r  eval = FALSE}
+data <- data %>%
+  pivot_longer(!c(strain.id, day, time), names_to = "well", values_to = "OD600")
+```
+
+
+Combine data with strain and compound data:
+```{r  eval = FALSE}
+strains <- read.table(file = "data/strains.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+compounds <- read.table(file = "data/compounds.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- merge(strains, data, by = "strain.id")
+data <- merge(compounds, data, by = "well")
+
+data <- data %>% 
+  select(strain.id, strain, well, compound, concentration, replicate, day, time, OD600) %>%
+  arrange(strain, compound, concentration, replicate, day, time)
+```
+
+
+Save data file in long format:
+```{r eval = FALSE}
+write.table(data, file = "data/ale_data_raw.txt", 
+            sep = "\t", dec = ".",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+
+# Raw data plots
+
+```{r  eval = FALSE}
+data <- read.table(file = "data/ale_data_raw.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+data$replicate <- as.factor(data$replicate)
+data$day <- as.factor(data$day)
+data$well <- as.factor(data$well)
+levels(data$well)
+data$well <- factor(data$well , levels=c("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11", "A12", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10", "B11", "B12", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10", "C11", "C12", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12","E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G9", "G10", "G11", "G12", "H1", "H2", "H3", "H4", "H5", "H6", "H7", "H8", "H9", "H10", "H11", "H12"))
+
+strains <- unique(data$strain.id)
+
+for(i in seq_along(strains)) {
+  subset <- subset(data, strain.id == strains[i])
+  plot <- ggplot(subset, aes(x = time, y = OD600, color = day)) +
+    geom_point(size = 1, shape = 1) +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+          text = element_text(size=10),
+          axis.text.x = element_text(size = 10, color = "black"),
+          axis.text.y = element_text(size = 10, color = "black"),
+          strip.background = element_blank()) +
+    facet_wrap(~ well , ncol = 12) +
+    labs(x = "Time [h]")
+  ggsave(plot,
+         file = paste("figures/rawdata/ale_rawdata_", strains[i], ".png", sep = ""),
+         width = 45, height = 30, unit = "cm")
+}
+
+
+data <- data %>%
+  unite("compconc", compound:concentration, remove = FALSE)
+
+data$compconc <- as.factor(data$compconc)
+levels(data$compconc)
+data$compconc <- factor(data$compconc , levels=c("TBBPA_20", "TBBPA_10", "TBBPA_5", "BPAF_20", "BPAF_10", "BPAF_5", "Chlordecone_20", "Chlordecone_10", "Chlordecone_5", "Chlorothalonil_20", "Chlorothalonil_10", "Chlorothalonil_5", "Emamectin benzoate_20", "Emamectin benzoate_10", "Emamectin benzoate_5", "Fluazinam_20", "Fluazinam_10", "Fluazinam_5", "DMSO_0", "PFDA_125", "PFNA_250", "PFOA_500", "PFHpA_500"))
+
+for(i in seq_along(strains)) {
+  subset <- subset(data, strain.id == strains[i])
+  plot <- ggplot(subset, aes(x = time, y = OD600, color = day, shape = replicate)) +
+      geom_point(size = 1) +
+      theme_bw() +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+          text = element_text(size=10),
+          axis.text.x = element_text(size = 10, color = "black"),
+          axis.text.y = element_text(size = 10, color = "black"),
+          strip.background = element_blank()) +
+      facet_wrap(~ compconc , ncol = 6) +
+    labs(x = "Time [h]")
+  ggsave(plot,
+         file = paste("figures/rawdata/ale_rawdata_summary_", strains[i], ".png", sep = ""),
+         width = 30, height = 20, unit = "cm")
+}
+
+rm(list = ls())
+```
+
+
+
+
+
+# Normalising data by minimum value
+
+Read in data:
+```{r  eval = FALSE}
+data <- read.table(file = "data/ale_data_raw.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+Cut data to 24 h:
+```{r  eval = FALSE}
+data <- data %>%
+  filter(time <= 23)
+```
+
+
+
+
+Define function:
+```{r  eval = FALSE}
+SubtractMin <- function(y) {
+  new_data <- y %>%
+    group_by(strain, day, well) %>%
+    summarize(min = min(OD600))
+  new_data <- merge(y, new_data, by = c("strain", "day", "well"))
+  new_data$OD600 <- new_data$OD600 - new_data$min
+  df<-data.frame(new_data)
+  return(df)
+}
+```
+
+
+Normalise data:
+```{r  eval = FALSE}
+norm <- data %>%
+  SubtractMin %>%
+  select(strain.id, strain, well, compound, concentration, replicate, day, time, OD600) %>%
+  arrange(strain, compound, concentration, replicate, day, time)
+```
+
+
+Save data:
+```{r  eval = FALSE}
+write.table(norm, file = "data/ale_data_normalised.txt", 
+            sep = "\t", dec = ".",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+norm <- norm %>%
+  unite("compconc", compound:concentration, remove = FALSE)
+
+norm.pfas <- norm %>%
+  filter(compound %in% c("DMSO", "PFHpA", "PFOA", "PFNA", "PFDA"))
+write.table(norm.pfas, file = "data/ale_data_normalised_pfas.txt", 
+            sep = "\t", dec = ".",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+norm.xen <- norm %>%
+  filter(compound %in% c("DMSO", "BPAF", "Chlordecone", "Chlorothalonil", "Emamectin benzoate", "Fluazinam", "TBBPA"))
+write.table(norm.xen, file = "data/ale_data_normalised_xen.txt", 
+            sep = "\t", dec = ".",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+Plot normalised data:
+```{r  eval = FALSE}
+pfas <- read.table(file = "data/ale_data_normalised_pfas.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+pfas$day <- as.factor(pfas$day)
+pfas$compound <- as.factor(pfas$compound)
+levels(pfas$compound)
+pfas$compound <- factor(pfas$compound , levels=c("DMSO", "PFHpA", "PFOA", "PFNA", "PFDA"))
+
+ggplot(pfas, aes(x = time, y = OD600, color = day)) +
+  geom_point(size = 1, shape = 1) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(compound), rows = vars(strain)) +
+  scale_color_manual(values=c("blue", "forestgreen", "yellow", "orange", "red")) +
+  labs(x = "Time [h]")
+ggsave(file = "results/ale_pfas_growthcurve.pdf",
+         width = 18, height = 15, unit = "cm")
+
+
+
+xen <- read.table(file = "data/ale_data_normalised_xen.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+xen$day <- as.factor(xen$day)
+xen$compconc <- as.factor(xen$compconc)
+levels(xen$compconc)
+xen$compconc <- factor(xen$compconc , levels=c("DMSO_0", "BPAF_5", "BPAF_10", "BPAF_20", "Chlordecone_5", "Chlordecone_10", "Chlordecone_20", "Chlorothalonil_5", "Chlorothalonil_10", "Chlorothalonil_20", "Emamectin benzoate_5", "Emamectin benzoate_10", "Emamectin benzoate_20", "Fluazinam_5", "Fluazinam_10", "Fluazinam_20", "TBBPA_5", "TBBPA_10", "TBBPA_20"))
+
+ggplot(xen, aes(x = time, y = OD600, color = day)) +
+  geom_point(size = 1, shape = 1) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(compconc), rows = vars(strain)) +
+  scale_color_manual(values=c("blue", "forestgreen", "yellow", "orange", "red")) +
+  labs(x = "Time [h]")
+ggsave(file = "results/ale_xen_growthcurve.pdf",
+         width = 45, height = 15, unit = "cm")
+
+rm(list = ls())
+```
+
+
+
+# Calculating AUC and normalising by control values:
+
+Read in data:
+```{r  eval = FALSE}
+data <- read.table(file = "data/ale_data_normalised.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+```
+
+
+Calculate AUC:
+```{r  eval = FALSE}
+library(bayestestR)
+
+auc_data <- data %>%
+  group_by(strain.id, strain, well, compound, concentration, replicate, day) %>%
+  summarize(auc = area_under_curve(time, OD600, method = "trapezoid")) %>%
+  arrange(strain, compound, concentration, replicate, day)
+```
+
+
+
+Define functions for normalsising data:
+```{r eval = FALSE}
+NormalisationByControlMedian <- function(y) {
+  control <- y %>%
+    filter(compound == "DMSO") %>%
+    group_by(strain, day) %>%
+    summarize(ControlMedian = median(auc))
+  new_data <- merge(y, control, by = c("strain", "day"))
+  new_data$norm_auc <- new_data$auc / new_data$ControlMedian
+  df<-data.frame(new_data)
+  return(df)
+}
+```
+
+
+Normalise data:
+```{r eval = FALSE}
+auc_data1 <- auc_data %>%
+  NormalisationByControlMedian %>%
+  dplyr::select(strain.id, strain, well, compound, concentration, replicate, day, auc, norm_auc) %>%
+  arrange(strain, compound, concentration, replicate, day)
+
+write.table(auc_data1, file = "data/ale_data_auc.txt", 
+            sep = "\t", dec = ".",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+auc_summary <- auc_data1 %>%
+  group_by(strain.id, strain, compound, concentration, day) %>%
+  summarize(auc = median(auc), norm_auc = median(norm_auc))
+write.table(auc_summary, file = "data/ale_data_auc_summary.txt", 
+            sep = "\t", dec = ".",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+Plot AUC data:
+```{r eval = FALSE}
+data <- read.table(file = "data/ale_data_auc.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data$day <- as.factor(data$day)
+
+data <- data %>%
+  unite("compconc", compound:concentration, remove = FALSE)
+
+data$compconc <- as.factor(data$compconc)
+levels(data$compconc)
+data$compconc <- factor(data$compconc , levels=c("DMSO_0", "PFDA_125", "PFNA_250", "PFOA_500", "PFHpA_500", "TBBPA_20", "TBBPA_10", "TBBPA_5", "BPAF_20", "BPAF_10", "BPAF_5", "Chlordecone_20", "Chlordecone_10", "Chlordecone_5", "Chlorothalonil_20", "Chlorothalonil_10", "Chlorothalonil_5", "Emamectin benzoate_20", "Emamectin benzoate_10", "Emamectin benzoate_5", "Fluazinam_20", "Fluazinam_10", "Fluazinam_5"))
+
+strains <- unique(data$strain.id)
+
+for(i in seq_along(strains)) {
+  subset <- subset(data, strain.id == strains[i])
+  plot <- ggplot(subset, aes(x = compconc, y = norm_auc)) +
+    geom_boxplot(aes(color = day)) +
+    labs(y = "Normalised AUC") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+          text = element_text(size=10),
+          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, color = "black", size = 10),
+          axis.text.y = element_text(color = "black", size = 10),
+          axis.title.x = element_blank())
+  ggsave(plot,
+         file = paste("figures/aucdata/ale_auc_", strains[i], ".png", sep = ""),
+         width = 35, height = 10, unit = "cm")
+}
+
+
+# Plot PFAS data:
+pfas <- data %>%
+  filter(compound == "DMSO" | compound == "PFHpA" | compound == "PFOA" | compound == "PFNA" | compound == "PFDA")
+
+for(i in seq_along(strains)) {
+  subset <- subset(pfas, strain.id == strains[i])
+  plot <- ggplot(subset, aes(x = day, y = norm_auc)) +
+    geom_point(shape = 1, size = 3) +
+    labs(y = "Normalised AUC") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+          text = element_text(size=10),
+          axis.text.x = element_text(color = "black", size = 10),
+          axis.text.y = element_text(color = "black", size = 10),
+          strip.background = element_blank()) +
+    facet_wrap(~compconc, ncol = 5) +
+    labs(x = "Day") +
+    ylim(0,NA)
+  ggsave(plot,
+         file = paste("figures/aucdata/ale_auc_pfas_", strains[i], ".pdf", sep = ""),
+         width = 15, height = 5, unit = "cm")
+}
+
+
+
+# Plot other data:
+other <- data %>%
+  filter(compound != "PFHpA" & compound != "PFOA" & compound != "PFNA" & compound != "PFDA")
+
+for(i in seq_along(strains)) {
+  subset <- subset(other, strain.id == strains[i])
+  plot <- ggplot(subset, aes(x = compconc, y = norm_auc)) +
+    geom_boxplot(aes(color = day)) +
+    labs(y = "Normalised AUC") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+          text = element_text(size=10),
+          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, color = "black", size = 10),
+          axis.text.y = element_text(color = "black", size = 10),
+          axis.title.x = element_blank())
+  ggsave(plot,
+         file = paste("figures/aucdata/ale_auc_xen_", strains[i], ".png", sep = ""),
+         width = 25, height = 10, unit = "cm")
+}
+```
+
+
+Plot AUC data by compound group:
+```{r eval = FALSE}
+# plot PFAS data
+pfas <- read.table(file = "data/ale_data_auc.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+pfas <- pfas %>%
+  filter(compound %in% c("DMSO", "PFHpA", "PFOA", "PFNA", "PFDA"))
+
+pfas$compound <- as.factor(pfas$compound)
+levels(pfas$compound)
+pfas$compound <- factor(pfas$compound , levels=c("DMSO", "PFHpA", "PFOA", "PFNA", "PFDA"))
+pfas$day <- as.factor(pfas$day)
+
+ggplot(pfas, aes(x = day, y = norm_auc)) +
+  geom_point(size = 3, shape = 1) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(compound), rows = vars(strain)) +
+  labs(x = "Day", y = "Normalised AUC")
+ggsave(file = "results/ale_pfas_auc.pdf",
+         width = 18, height = 15, unit = "cm")
+
+
+# plot BPAF and TBBPA data
+xen <- read.table(file = "data/ale_data_auc.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+bptb <- xen %>%
+  filter(compound %in% c("DMSO", "BPAF", "TBBPA")) %>%
+  unite("compconc", compound:concentration, remove = FALSE)
+
+bptb$day <- as.factor(bptb$day)
+bptb$compconc <- as.factor(bptb$compconc)
+levels(bptb$compconc)
+bptb$compconc <- factor(bptb$compconc , levels=c("DMSO_0", "BPAF_5", "BPAF_10", "BPAF_20", "TBBPA_5", "TBBPA_10", "TBBPA_20"))
+
+ggplot(bptb, aes(x = day, y = norm_auc)) +
+  geom_point(size = 3, shape = 1) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(compconc), rows = vars(strain)) +
+  labs(x = "Day", y = "Normalised AUC")
+ggsave(file = "results/ale_bpaf_tbbpa_auc.pdf",
+         width = 22, height = 15, unit = "cm")
+
+
+# plot pesticides data
+pest <- xen %>%
+  filter(compound %in% c("DMSO", "Chlordecone", "Chlorothalonil", "Emamectin benzoate", "Fluazinam")) %>%
+  unite("compconc", compound:concentration, remove = FALSE)
+
+pest$day <- as.factor(pest$day)
+pest$compconc <- as.factor(pest$compconc)
+levels(pest$compconc)
+pest$compconc <- factor(pest$compconc , levels=c("DMSO_0", "Chlordecone_5", "Chlordecone_10", "Chlordecone_20", "Chlorothalonil_5", "Chlorothalonil_10", "Chlorothalonil_20", "Emamectin benzoate_5", "Emamectin benzoate_10", "Emamectin benzoate_20", "Fluazinam_5", "Fluazinam_10", "Fluazinam_20"))
+
+ggplot(pest, aes(x = day, y = norm_auc)) +
+  geom_point(size = 3, shape = 1) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_blank()) +
+  facet_grid(cols = vars(compconc), rows = vars(strain)) +
+  labs(x = "Day", y = "Normalised AUC")
+ggsave(file = "results/ale_pesticides_auc.pdf",
+         width = 40, height = 15, unit = "cm")
+
+rm(list = ls())
+```
+
+
+
+
+# Quality control:
+
+Plot Control growth curves:
+```{r  eval = FALSE}
+data <- read.table(file = "data/ale_data_normalised.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+control <- data %>% filter(compound == "DMSO")
+
+control$replicate <- as.factor(control$replicate)
+control$day <- as.factor(control$day)
+
+ggplot(control, aes(x = time, y = OD600, color = day, shape = replicate)) +
+  ggtitle("DMSO controls") +
+  geom_point(size = 1) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.text.x = element_text(color = "black", size = 10),
+        axis.text.y = element_text(color = "black", size = 10),
+        strip.background = element_blank()) +
+  facet_wrap(~ strain , ncol = 3) +
+  labs(x = "Time [h]")
+ggsave("qualitycontrol/al3_dmsocontrol.png",
+         width = 20, height = 15, unit = "cm")
+
+rm(list = ls())
+```
+
+
+Normalised data distribution of controls:
+```{r eval = FALSE}
+data <- read.table(file = "data/ale_data_auc.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+controls <- data %>%
+  filter(compound == "DMSO")
+
+ggplot(controls, aes(x = norm_auc)) +
+    geom_density() +
+    ggtitle("Distribution of AUC for Controls")
+ggsave(file = "qualitycontrol/ale_auc_distribution_controls.png",
+       width = 20, height = 15, unit = "cm")
+ggplot(controls, aes(x = norm_auc)) +
+    geom_density() +
+    ggtitle("Distribution of AUC for Controls") +
+  facet_wrap(~ strain)
+ggsave(file = "qualitycontrol/ale_auc_distribution_bystrain.png",
+       width = 20, height = 15, unit = "cm")
+
+rm(list = ls())
+```
+
+10 % growth inhibition/promotion seems like a good cut off value
+
+
+
+# Statistical analysis
+
+Determine significant difference in growth compared to DMSO control:
+```{r eval = FALSE}
+data <- read.table(file = "data/ale_data_auc.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+strains <- unique(data$strain.id)
+comp <- unique(data$compound)
+conc <- unique(data$concentration)
+time <- unique(data$day)
+
+n <- 1
+p1_value <- data.frame(strain.id = character(),
+                      compound = character(),
+                      concentration = character(),
+                      day = numeric(),
+                      foldchange = character(),
+                      p.value = numeric())
+for (s in seq_along(strains)) {
+  samples1 <- data %>% filter(strain.id == strains[s] & compound != "DMSO")
+  controls1 <- data %>% filter(strain.id == strains[s] & compound == "DMSO")
+  for (c in seq_along(comp)) {
+    samples2 <- samples1 %>% filter(compound == comp[c])
+    for (i in seq_along(conc)) {
+      samples3 <- samples2 %>% filter(concentration == conc[i])
+      if (nrow(samples3) == 0) next
+      for (d in seq_along(time)) {
+        samples4 <- samples3 %>% filter(day == time[d])
+        controls2 <- controls1 %>% filter(day == time[d])
+        test <- t.test(x = samples4$norm_auc, y = controls2$norm_auc, alternative = "two.sided")
+        fold <- median(samples4$norm_auc) / median(controls2$norm_auc)
+        p1_value[n, 1:6] <- c(strains[s], comp[c], conc[i], time[d], fold, test$p.value)
+        n <- n + 1
+      }
+    }
+  }
+}
+
+adj1_data <- p1_value %>%
+  group_by(strain.id) %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr")) %>%
+  arrange(strain.id, compound)
+
+write.table(adj1_data,
+            file = "results/ale_results_compound_vs_dmso.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+
+Determine significant difference in growth compared to day0:
+```{r eval = FALSE}
+data <- read.table(file = "data/ale_data_auc.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data <- data %>% filter(compound != "DMSO")
+
+strains <- unique(data$strain.id)
+comp <- unique(data$compound)
+conc <- unique(data$concentration)
+time <- c(5, 10, 15, 20)
+
+n <- 1
+p1_value <- data.frame(strain.id = character(),
+                      compound = character(),
+                      concentration = character(),
+                      day = numeric(),
+                      foldchange = character(),
+                      p.value = numeric())
+for (s in seq_along(strains)) {
+  samples1 <- data %>% filter(strain.id == strains[s] & day != 0)
+  controls1 <- data %>% filter(strain.id == strains[s] & day == 0)
+  for (c in seq_along(comp)) {
+    samples2 <- samples1 %>% filter(compound == comp[c])
+    controls2 <- controls1 %>% filter(compound == comp[c])
+    for (i in seq_along(conc)) {
+      samples3 <- samples2 %>% filter(concentration == conc[i])
+      controls3 <- controls2 %>% filter(compound == comp[c])
+      if (nrow(samples3) == 0) next
+      for (d in seq_along(time)) {
+        samples4 <- samples3 %>% filter(day == time[d])
+        test <- t.test(x = samples4$norm_auc, y = controls3$norm_auc, alternative = "two.sided")
+        fold <- median(samples4$norm_auc) / median(controls3$norm_auc)
+        p1_value[n, 1:6] <- c(strains[s], comp[c], conc[i], time[d], fold, test$p.value)
+        n <- n + 1
+      }
+    }
+  }
+}
+
+adj1_data <- p1_value %>%
+  group_by(strain.id) %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr")) %>%
+  arrange(strain.id, compound)
+
+write.table(adj1_data,
+            file = "results/ale_results_compared_to_0.txt",
+            sep = "\t", dec = ".", na = "NA",
+            row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+rm(list = ls())
+```
+
+
+
+PFAS results:
+```{r eval = FALSE}
+data1 <- read.table(file = "results/ale_results_compound_vs_dmso.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+data2 <- read.table(file = "results/ale_results_compared_to_0.txt", 
+                   sep = "\t", dec = ".", header = TRUE)
+
+data1 <- data1 %>% 
+  unite("compconc", compound:concentration, remove = FALSE) %>%
+  mutate(hit = case_when(foldchange > 1.2 & p_adj < 0.05 ~ "growth improved",
+                         foldchange < 0.8 & p_adj < 0.05 ~ "growth decreased",
+                         .default = "unchanged")) %>%
+  mutate(significance = case_when(foldchange > 1.2 & p_adj < 0.05 ~ "*",
+                                  foldchange < 0.8 & p_adj < 0.05 ~ "*",
+                                  .default = ""))
+
+data2 <- data2 %>% 
+  unite("compconc", compound:concentration, remove = FALSE) %>%
+  mutate(hit = case_when(foldchange > 1 & p_adj < 0.05 ~ "growth improved",
+                         foldchange < 1 & p_adj < 0.05 ~ "growth decreased",
+                         p_adj >= 0.05 ~ "unchanged")) %>%
+  mutate(significance = case_when(foldchange > 1.2 & p_adj < 0.05 ~ "*",
+                                  foldchange < 0.8 & p_adj < 0.05 ~ "*",
+                                  .default = ""))
+
+
+# plot heatmap for growth inhibition compared to DMSO control
+data1$compconc <- as.factor(data1$compconc)
+levels(data1$compconc)
+data1$compconc <- factor(data1$compconc , levels=c("DMSO_0", "PFHpA_500", "PFOA_500", "PFNA_250", "PFDA_125", "BPAF_5", "BPAF_10", "BPAF_20", "TBBPA_5", "TBBPA_10", "TBBPA_20", "Chlordecone_5", "Chlordecone_10", "Chlordecone_20", "Chlorothalonil_5", "Chlorothalonil_10", "Chlorothalonil_20", "Emamectin benzoate_5", "Emamectin benzoate_10", "Emamectin benzoate_20", "Fluazinam_5", "Fluazinam_10", "Fluazinam_20"))
+ggplot(data1, aes(x = compconc, y = strain.id)) +
+  geom_tile(aes(fill = foldchange), color = "black") +
+  geom_text(aes(label = significance)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust = 0.5, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~day, ncol = 1) +
+  scale_fill_gradient2(low = "darkred", mid = "white", high = "darkgreen", midpoint = 1, limits=c(0,2))
+ggsave(file = "results/ale_results_compound_vs_dmso.pdf",
+         width = 15, height = 20, unit = "cm")
+
+
+# plot heatmap for growth change compared to day 0
+data2$compconc <- as.factor(data2$compconc)
+levels(data2$compconc)
+data2$compconc <- factor(data2$compconc , levels=c("DMSO_0", "PFHpA_500", "PFOA_500", "PFNA_250", "PFDA_125", "BPAF_5", "BPAF_10", "BPAF_20", "TBBPA_5", "TBBPA_10", "TBBPA_20", "Chlordecone_5", "Chlordecone_10", "Chlordecone_20", "Chlorothalonil_5", "Chlorothalonil_10", "Chlorothalonil_20", "Emamectin benzoate_5", "Emamectin benzoate_10", "Emamectin benzoate_20", "Fluazinam_5", "Fluazinam_10", "Fluazinam_20"))
+ggplot(data2, aes(x = day, y = compconc)) +
+  geom_tile(aes(fill = foldchange), color = "black") +
+  geom_text(aes(label = significance)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        text = element_text(size=10),
+        axis.title.x = element_text(size=10),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=10, color = "black"),
+        axis.text.y = element_text(size=10, color = "black"),
+        strip.background = element_blank()) +
+  facet_wrap(~strain.id, ncol = 5) +
+  labs(x = "Day") +
+  scale_fill_gradient2(low = "darkred", mid = "white", high = "darkgreen", midpoint = 1, limits=c(0,2), na.value = "darkgreen") +
+  guides(color = guide_legend(override.aes = list(fill = "grey")))
+ggsave(file = "results/ale_results_compared_to_0.pdf",
+         width = 18, height = 12, unit = "cm")
+
+
+rm(list = ls())
+```
+
+
+
