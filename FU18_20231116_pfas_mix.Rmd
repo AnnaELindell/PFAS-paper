@@ -296,7 +296,7 @@ pellet <- pellet %>%
 pellet.sum <- pellet %>%
   group_by(compound, strain) %>%
   summarise(se1 = sd(conc)/length(conc), len1 = median(conc),
-            se2 = sd(conc2)/length(conc), len2 = median(conc2))
+            se2 = sd(conc2)/length(conc2), len2 = median(conc2))
 
 ggplot(pellet.sum, aes(x = compound, y = len1, fill = strain)) +
   geom_bar(stat = "identity", position = position_dodge(0.7), width = 0.7) +
@@ -315,6 +315,7 @@ ggsave(file = "results/fu18_pfas_conc_pellet_barchart_se_1.png",
 ggplot(pellet.sum, aes(x = compound, y = len2, fill = strain)) +
   geom_bar(stat = "identity", position = position_dodge(0.7), width = 0.7) +
   geom_errorbar(aes(ymin = len2-se2, ymax = len2+se2), position = position_dodge(0.7), width = 0.4) +
+geom_point(data = pellet, aes(y= conc2), position = position_dodge(0.7), alpha = 0.5) +
   theme_bw() +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
         text = element_text(size=10),
