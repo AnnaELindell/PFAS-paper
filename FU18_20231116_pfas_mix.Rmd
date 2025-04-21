@@ -195,6 +195,7 @@ data.sum <- data %>%
 ggplot(data.sum, aes(x = compound, y = len, fill = group)) +
   geom_bar(stat = "identity", position = position_dodge(0.7), width = 0.7) +
   geom_errorbar(aes(ymin = len-se, ymax = len+se), position = position_dodge(0.7), width = 0.4) +
+geom_point(data = data, aes(y= percent), position = position_dodge(0.7), alpha = 0.5) +
   theme_bw() +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
         text = element_text(size=10),
